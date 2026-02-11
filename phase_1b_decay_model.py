@@ -5,10 +5,25 @@
 #
 # **Calculation Date:** 30-Dec-2023
 #
+# **WHAT ARE WE DOING HERE?**
+# We're answering the question: "How long will deposits stay with the bank?"
+#
+# **WHY?**
+# NMDs (savings accounts) have no fixed maturity, so we need to estimate when
+# customers will withdraw. This "decay rate" tells us the probability of withdrawal.
+#
+# **THE SURVIVAL FUNCTION S(t):**
+# S(t) = Probability that $1 deposited today is still in the account at time t
+# Example: S(365 days) = 0.85 means 85% of deposits survive 1 year
+#
+# **KEY CONCEPT:**
+# λ (lambda) = daily decay rate = Outflow / Balance
+# S(t) = (1 - λ)^t  (like radioactive decay!)
+#
 # This notebook performs:
 # - Estimate conditional decay rate (CDR) from historical data
 # - Build exponential survival function S(t)
-# - Apply 5-year regulatory cap
+# - Apply 5-year regulatory cap (Basel rule)
 # - Generate survival probabilities at key tenors
 # - Visualize decay curves
 
@@ -50,13 +65,19 @@ print(f"\nData columns: {nmd_data.columns.tolist()}")
 # ### 2.1 Calculate Mean Daily Decay Rate
 
 # %%
-# Daily decay rate = Outflow / Balance
+# ========================================
+# CONCEPT: Daily Conditional Decay Rate
+# ========================================
+# Daily decay rate (λ) = Outflow / Balance
+# This is the CONDITIONAL probability that a deposit leaves on any given day.
+#
+# Example: If λ = 0.15%, then each day there's a 0.15% chance of withdrawal
 # Already computed in Phase 1a as 'daily_decay_rate'
 
-# Basic statistics on daily decay rate
-mean_daily_decay = nmd_data['daily_decay_rate'].mean()
-median_daily_decay = nmd_data['daily_decay_rate'].median()
-std_daily_decay = nmd_data['daily_decay_rate'].std()
+# Calculate summary statistics on daily decay rate
+mean_daily_decay = nmd_data['daily_decay_rate'].mean()      # Average decay per day
+median_daily_decay = nmd_data['daily_decay_rate'].median()  # Middle value (robust to outliers)
+std_daily_decay = nmd_data['daily_decay_rate'].std()        # Volatility of decay rate
 
 print("="*80)
 print("DAILY DECAY RATE STATISTICS")
@@ -68,10 +89,21 @@ print(f"Min Daily Decay Rate:                {nmd_data['daily_decay_rate'].min()
 print(f"Max Daily Decay Rate:                {nmd_data['daily_decay_rate'].max():.6f}  ({nmd_data['daily_decay_rate'].max()*100:.4f}%)")
 
 # %%
-# Convert to monthly decay rate
-# lambda_monthly = 1 - (1 - lambda_daily)^30
+# ========================================
+# CONCEPT: Converting Daily to Monthly Decay
+# ========================================
+# Why compound? Because each day, a portion of deposits leaves.
+#
+# Formula: lambda_monthly = 1 - (1 - lambda_daily)^30
+#
+# Intuition: If 0.15% leaves each day, after 30 days:
+# Remaining = (1 - 0.0015)^30 = 0.956 = 95.6%
+# So monthly decay = 1 - 0.956 = 4.4%
+#
+# This is compound decay, like compound interest in reverse!
+
 lambda_daily = mean_daily_decay
-lambda_monthly = 1 - (1 - lambda_daily)**30
+lambda_monthly = 1 - (1 - lambda_daily)**30  # Compound 30 days of daily decay
 
 print("\n" + "="*80)
 print("MONTHLY DECAY RATE CONVERSION")
@@ -534,6 +566,249 @@ ax.axvline(x=0, color='black', linewidth=0.8)
 ax.grid(True, alpha=0.3, axis='x')
 plt.tight_layout()
 plt.show()
+
+# %% [markdown]
+# ### 5.4 NEW: More Interpretable Charts for OLS
+
+# %%
+# ========================================
+# CHART 1: Residual Plot (Check Model Assumptions)
+# ========================================
+# Purpose: See if errors are random (good) or patterned (bad)
+# Residuals = Actual - Predicted
+
+print("\n" + "="*80)
+print("ADDITIONAL OLS DIAGNOSTIC CHARTS")
+print("="*80)
+
+residuals = ols_model.resid
+fitted = ols_model.fittedvalues
+
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+# Top-left: Residuals vs Fitted
+axes[0, 0].scatter(fitted, residuals, alpha=0.3, s=10, color='#023047')
+axes[0, 0].axhline(y=0, color='red', linestyle='--', linewidth=2)
+axes[0, 0].set_xlabel('Fitted Values (Predicted Decay)', fontsize=10)
+axes[0, 0].set_ylabel('Residuals (Actual - Predicted)', fontsize=10)
+axes[0, 0].set_title('Residual Plot: Check for Patterns\n(Should look random around zero)',
+                     fontsize=11, fontweight='bold')
+axes[0, 0].grid(True, alpha=0.3)
+
+# Top-right: Q-Q Plot (Check if errors are normal)
+from scipy import stats
+stats.probplot(residuals, dist="norm", plot=axes[0, 1])
+axes[0, 1].set_title('Q-Q Plot: Check if Residuals are Normal\n(Should follow red line)',
+                     fontsize=11, fontweight='bold')
+axes[0, 1].grid(True, alpha=0.3)
+
+# Bottom-left: Histogram of residuals
+axes[1, 0].hist(residuals, bins=50, color='#2A9D8F', alpha=0.7, edgecolor='black')
+axes[1, 0].axvline(x=0, color='red', linestyle='--', linewidth=2, label='Zero')
+axes[1, 0].set_xlabel('Residuals', fontsize=10)
+axes[1, 0].set_ylabel('Frequency', fontsize=10)
+axes[1, 0].set_title('Distribution of Residuals\n(Should be centered at zero)',
+                     fontsize=11, fontweight='bold')
+axes[1, 0].legend(fontsize=9)
+axes[1, 0].grid(True, alpha=0.3, axis='y')
+
+# Bottom-right: Residuals over time
+axes[1, 1].scatter(reg_data.index, residuals, alpha=0.3, s=10, color='#E63946')
+axes[1, 1].axhline(y=0, color='black', linestyle='--', linewidth=1)
+axes[1, 1].set_xlabel('Time (Index)', fontsize=10)
+axes[1, 1].set_ylabel('Residuals', fontsize=10)
+axes[1, 1].set_title('Residuals Over Time\n(Check for time patterns)',
+                     fontsize=11, fontweight='bold')
+axes[1, 1].grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+print("✓ Residual diagnostic charts created")
+print("  → If residuals random around zero = Good model!")
+print("  → If residuals show patterns = Model missing something")
+
+# %%
+# ========================================
+# CHART 2: Actual vs Predicted Scatter Plot
+# ========================================
+# Purpose: See how well predictions match reality
+# Perfect predictions would lie on the diagonal line
+
+fig, ax = plt.subplots(figsize=(10, 8))
+
+actual = y
+predicted = fitted
+
+# Scatter plot
+ax.scatter(actual, predicted, alpha=0.4, s=20, color='#023047', label='Observations')
+
+# Perfect prediction line (45-degree)
+min_val = min(actual.min(), predicted.min())
+max_val = max(actual.max(), predicted.max())
+ax.plot([min_val, max_val], [min_val, max_val],
+        'r--', linewidth=2, label='Perfect Prediction (45° line)')
+
+# Add R² annotation
+ax.text(0.05, 0.95, f'R² = {ols_model.rsquared:.4f}',
+        transform=ax.transAxes, fontsize=12, fontweight='bold',
+        verticalalignment='top',
+        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+ax.set_xlabel('Actual Decay Rate', fontsize=12)
+ax.set_ylabel('Predicted Decay Rate', fontsize=12)
+ax.set_title('OLS Predictions: Actual vs Predicted Decay Rates\n(Closer to red line = Better predictions)',
+             fontsize=13, fontweight='bold')
+ax.legend(fontsize=10)
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+print("\n✓ Actual vs Predicted scatter plot created")
+print(f"  → R² = {ols_model.rsquared:.4f} means model explains {ols_model.rsquared*100:.1f}% of variation")
+
+# %%
+# ========================================
+# CHART 3: Prediction Error Over Time
+# ========================================
+# Purpose: See if errors are getting worse/better over time
+
+fig, axes = plt.subplots(2, 1, figsize=(14, 10))
+
+# Top: Actual vs Predicted over time
+axes[0].plot(reg_data.index, actual, linewidth=1, color='#023047',
+            label='Actual Decay Rate', alpha=0.7)
+axes[0].plot(reg_data.index, predicted, linewidth=1, color='#E63946',
+            label='OLS Predicted', alpha=0.7, linestyle='--')
+axes[0].fill_between(reg_data.index, actual, predicted, alpha=0.2, color='red')
+axes[0].set_ylabel('Daily Decay Rate', fontsize=11)
+axes[0].set_title('Time Series: Actual vs OLS Predicted Decay Rates',
+                 fontsize=12, fontweight='bold')
+axes[0].legend(fontsize=10, loc='upper right')
+axes[0].grid(True, alpha=0.3)
+
+# Bottom: Absolute prediction error over time
+abs_error = np.abs(residuals)
+axes[1].plot(reg_data.index, abs_error, linewidth=0.8, color='#E63946', alpha=0.6)
+axes[1].axhline(y=abs_error.mean(), color='blue', linestyle='--', linewidth=2,
+               label=f'Mean Abs Error: {abs_error.mean():.6f}')
+axes[1].fill_between(reg_data.index, 0, abs_error, alpha=0.3, color='red')
+axes[1].set_xlabel('Time (Index)', fontsize=11)
+axes[1].set_ylabel('Absolute Prediction Error', fontsize=11)
+axes[1].set_title('Prediction Error Over Time (Lower = Better)',
+                 fontsize=12, fontweight='bold')
+axes[1].legend(fontsize=10)
+axes[1].grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+print("\n✓ Time series prediction error chart created")
+print(f"  → Mean absolute error: {abs_error.mean():.6f}")
+print(f"  → Median absolute error: {abs_error.median():.6f}")
+
+# %%
+# ========================================
+# CHART 4: Feature Effects (Top 5 Features)
+# ========================================
+# Purpose: Show HOW each feature affects decay rate
+# This makes the model interpretable!
+
+# Get top 5 features by absolute coefficient size (excluding const)
+params_no_const = ols_model.params.drop('const')
+top_5_features = params_no_const.abs().nlargest(5).index
+
+fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+axes = axes.flatten()
+
+for idx, feature in enumerate(top_5_features):
+    ax = axes[idx]
+
+    # Get feature values and predicted decay
+    feature_vals = X[feature]
+
+    # Sort for cleaner plot
+    sort_idx = np.argsort(feature_vals)
+    x_sorted = feature_vals.iloc[sort_idx]
+    y_sorted = fitted.iloc[sort_idx]
+
+    # Plot relationship
+    ax.scatter(feature_vals, fitted, alpha=0.3, s=10, color='#023047')
+
+    # Add trend line (moving average)
+    if len(x_sorted) > 50:
+        window = len(x_sorted) // 20
+        y_smooth = pd.Series(y_sorted.values).rolling(window=window, center=True).mean()
+        ax.plot(x_sorted, y_smooth, color='#E63946', linewidth=3,
+               label=f'Trend (β={ols_model.params[feature]:.6f})')
+
+    ax.set_xlabel(feature, fontsize=10)
+    ax.set_ylabel('Predicted Decay Rate', fontsize=10)
+    ax.set_title(f'Effect of {feature}\n(p={ols_model.pvalues[feature]:.4f})',
+                fontsize=10, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=8)
+
+# Remove extra subplot
+axes[5].axis('off')
+
+plt.suptitle('Feature Effects: How Each Variable Affects Predicted Decay Rate',
+             fontsize=14, fontweight='bold', y=1.00)
+plt.tight_layout()
+plt.show()
+
+print("\n✓ Feature effects charts created (top 5 features)")
+print("  → Shows HOW each feature affects decay predictions")
+print("  → Upward slope = Higher feature value → Higher decay")
+print("  → Downward slope = Higher feature value → Lower decay")
+
+# %%
+# ========================================
+# CHART 5: Coefficient Interpretation Guide
+# ========================================
+# Purpose: Easy-to-read coefficient table with interpretations
+
+# Create interpretation table
+coef_df = pd.DataFrame({
+    'Feature': ols_model.params.index,
+    'Coefficient': ols_model.params.values,
+    'p_value': ols_model.pvalues.values,
+    'Significant': ['***' if p < 0.001 else '**' if p < 0.01 else '*' if p < 0.05 else ''
+                    for p in ols_model.pvalues.values]
+})
+
+# Add interpretation
+def interpret_coef(row):
+    if row['Feature'] == 'const':
+        return 'Baseline decay rate when all features = 0'
+    elif 'log_balance' in row['Feature']:
+        return '+1% balance → decay changes by {:.6f}'.format(row['Coefficient'] * 0.01)
+    elif 'trend' in row['Feature']:
+        return 'Each day, decay changes by {:.6f}'.format(row['Coefficient'])
+    elif 'rolling' in row['Feature']:
+        return 'If past decay +1%, today\'s decay +{:.2f}%'.format(row['Coefficient'] * 100)
+    elif 'dow' in row['Feature']:
+        day = row['Feature'].split('_')[1]
+        days = {1: 'Tue', 2: 'Wed', 3: 'Thu', 4: 'Fri', 5: 'Sat', 6: 'Sun'}
+        return f'{days.get(int(day), "Unknown")} vs Monday: {row["Coefficient"]:+.6f}'
+    elif 'month' in row['Feature']:
+        m = row['Feature'].split('_')[1]
+        months = {2:'Feb',3:'Mar',4:'Apr',5:'May',6:'Jun',7:'Jul',8:'Aug',9:'Sep',10:'Oct',11:'Nov',12:'Dec'}
+        return f'{months.get(int(m), "Unknown")} vs Jan: {row["Coefficient"]:+.6f}'
+    else:
+        return 'Custom feature effect'
+
+coef_df['Interpretation'] = coef_df.apply(interpret_coef, axis=1)
+
+# Show top 10 by significance
+top_significant = coef_df.nsmallest(10, 'p_value')
+
+print("\n" + "="*80)
+print("TOP 10 MOST SIGNIFICANT FEATURES (Interpretation Guide)")
+print("="*80)
+print("\nSignificance codes: *** p<0.001  ** p<0.01  * p<0.05")
+print("-"*80)
+print(top_significant[['Feature', 'Coefficient', 'p_value', 'Significant', 'Interpretation']].to_string(index=False))
 
 # Print interpretation
 print("="*80)

@@ -5,6 +5,32 @@
 #
 # **Calculation Date:** 30-Dec-2023
 #
+# **WHAT ARE WE DOING HERE?**
+# Distributing our $18,652 deposit balance into 11 time buckets based on
+# WHEN we expect the deposits to reprice (i.e., when customers might withdraw).
+#
+# **WHY?**
+# We need to know the TIMING of cash flows to:
+# 1. Calculate present value (earlier CF = higher PV)
+# 2. Measure repricing risk (what's exposed to rate changes?)
+# 3. Meet Basel reporting requirements
+#
+# **THE 11 BUCKETS:**
+# O/N, 1M, 2M, 3M, 6M, 9M, 1Y, 2Y, 3Y, 4Y, 5Y
+#
+# **THE SLOTTING RULE:**
+# - Non-Core → ALL goes to O/N (reprices immediately)
+# - Core → Distributed using survival function S(t)
+#
+# **FORMULA:**
+# Cash Flow in bucket i = Core × [S(t_start) - S(t_end)]
+#
+# **EXAMPLE for 1Y bucket (9M to 1Y):**
+# S(270 days) = 0.65  (65% survive to 9 months)
+# S(365 days) = 0.60  (60% survive to 1 year)
+# CF = 9,511 × (0.65 - 0.60) = 475.55
+# → $475.55 will reprice between 9 months and 1 year
+#
 # This notebook performs:
 # - Define standard IRRBB time buckets
 # - Slot non-core deposits into O/N bucket

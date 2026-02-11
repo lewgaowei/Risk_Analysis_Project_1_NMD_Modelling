@@ -5,10 +5,32 @@
 #
 # **Calculation Date:** 30-Dec-2023
 #
+# **WHAT ARE WE DOING HERE?**
+# Splitting deposits into two buckets: STABLE vs VOLATILE
+#
+# **WHY DOES BASEL REQUIRE THIS?**
+# Not all deposits behave the same way:
+# - Some customers are loyal, never leave (CORE/STABLE)
+# - Others chase best rates, leave quickly (NON-CORE/VOLATILE)
+#
+# **CORE DEPOSITS:**
+# - Sticky, relationship-based
+# - Reprice slowly over time (up to 5 years)
+# - Example: Your grandma's checking account at her local bank
+#
+# **NON-CORE DEPOSITS:**
+# - Rate-sensitive "hot money"
+# - Reprice immediately (Overnight bucket)
+# - Example: Wholesale funding from another bank
+#
+# **METHOD: Historical Minimum**
+# The balance that stayed even during crisis = Core floor
+# In your data: Min balance = 9,511, Current = 18,652 → Core = 51%
+#
 # This notebook performs:
 # - Estimate core deposit floor using multiple methods
 # - Split NMD balance into Core (stable) and Non-Core (volatile)
-# - Apply Basel regulatory constraints
+# - Apply Basel regulatory constraints (max 5Y maturity, max 90% core)
 # - Sensitivity analysis on core ratio assumptions
 # - Visualize core/non-core split
 
