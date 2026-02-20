@@ -1,0 +1,126 @@
+{
+  "metadata": {
+    "project": "QF609 Project #1 - IRRBB Modelling",
+    "phase": "Phase 1c - Regression-Based Core Estimation",
+    "calculation_date": "2023-12-30",
+    "generation_timestamp": "2026-02-20 21:04:09",
+    "data_start_date": "2016-12-31",
+    "data_end_date": "2023-12-30",
+    "num_observations": 2556
+  },
+  "current_balance": {
+    "amount": 18651.70481694874,
+    "historical_min": 9510.98045073734,
+    "historical_max": 22746.95662006938,
+    "growth_rate_annual": 1468.9856613358818
+  },
+  "primary_recommendation": {
+    "method": "Detrended Regression",
+    "description": "Current Balance + Min(Residual from Linear Trend)",
+    "core_amount": 15586.373727163198,
+    "core_ratio_pct": 83.56541066959153,
+    "non_core_amount": 3065.331089785541,
+    "non_core_ratio_pct": 16.43458933040848,
+    "behavioral_maturity_core": "5 Years Max",
+    "behavioral_maturity_non_core": "O/N",
+    "repricing_core": "Distributed 1M-5Y",
+    "repricing_non_core": "Immediate (O/N)"
+  },
+  "regression_methods": {
+    "1_mean_reversion": {
+      "name": "Mean Reversion (Vasicek)",
+      "description": "Long-run mean from \u0394B regression",
+      "model_equation": "\u0394B(t) = 24.07 + -0.001311\u00d7B(t-1)",
+      "parameters": {
+        "intercept_a": 24.073635073961317,
+        "slope_b": -0.001310780698890488,
+        "long_run_mean_theta": 18365.875462110846,
+        "reversion_speed_kappa": 0.001310780698890488,
+        "half_life_days": 528.8048421422902,
+        "r_squared": 0.001014757849544301,
+        "rmse": 134.14239327561455
+      },
+      "core_amount": 18365.875462110846,
+      "core_ratio_pct": 98.46754300669524
+    },
+    "2_detrended_regression": {
+      "name": "Detrended Regression (RECOMMENDED)",
+      "description": "Current Balance + Min(Residual from Linear Trend)",
+      "model_equation": "Balance(t) = 10,642.21 + 4.0246\u00d7t",
+      "parameters": {
+        "trend_intercept": 10642.21303023618,
+        "trend_slope": 4.024618250235292,
+        "annual_trend": 1468.9856613358818,
+        "r_squared": 0.8289968567090016,
+        "min_residual": -3065.331089785541,
+        "max_residual": 4276.861093125557,
+        "residual_range": 7342.192182911098
+      },
+      "core_amount": 15586.373727163198,
+      "core_ratio_pct": 83.56541066959153
+    },
+    "3_quantile_regression": {
+      "name": "Quantile Regression on Time",
+      "description": "10th percentile on time",
+      "quantiles": {
+        "q5": {
+          "quantile": 0.05,
+          "intercept": 9709.786813046641,
+          "slope": 3.317973381881822,
+          "core_at_calc_date": 18187.208803754696,
+          "core_ratio_pct": 97.5096324022244
+        },
+        "q10": {
+          "quantile": 0.1,
+          "intercept": 9901.546801497196,
+          "slope": 3.339283349310548,
+          "core_at_calc_date": 18433.415758985648,
+          "core_ratio_pct": 98.8296562694648
+        },
+        "q15": {
+          "quantile": 0.15,
+          "intercept": 10038.108809092242,
+          "slope": 3.3521246308995885,
+          "core_at_calc_date": 18602.787241040693,
+          "core_ratio_pct": 99.73773134205086
+        },
+        "q25": {
+          "quantile": 0.25,
+          "intercept": 10147.854862917327,
+          "slope": 3.5331327301644473,
+          "core_at_calc_date": 19175.00898848749,
+          "core_ratio_pct": 102.80566402199989
+        }
+      },
+      "primary_quantile": 0.1,
+      "core_amount": 18433.415758985648,
+      "core_ratio_pct": 98.8296562694648
+    },
+    "4_exponential_growth": {
+      "name": "Exponential Growth Model",
+      "description": "Floor from growth model B(t) = core \u00d7 (1 + growth_rate)^t",
+      "converged": true,
+      "parameters": {
+        "core_floor": 11372.113761407452,
+        "annual_growth_rate": 0.09342639333758528,
+        "annual_growth_rate_pct": 9.342639333758527,
+        "r_squared": 0.7965464053236568,
+        "rmse": 1471.1302553048035
+      },
+      "core_amount": 11372.113761407452,
+      "core_ratio_pct": 60.97090787686953
+    }
+  },
+  "statistical_summary": {
+    "mean_core": 15939.444677416786,
+    "mean_core_ratio_pct": 85.45837945565528,
+    "median_core": 16976.12459463702,
+    "median_core_ratio_pct": 91.01647683814338,
+    "std_dev": 2876.3096539168214,
+    "min_core": 11372.113761407452,
+    "min_core_ratio_pct": 60.97090787686953,
+    "max_core": 18433.415758985648,
+    "max_core_ratio_pct": 98.8296562694648
+  },
+  "regulatory_compliance": {
+    "retail_cap_90pct": 

@@ -58,19 +58,42 @@ plt.rcParams['font.size'] = 10
 print("Libraries imported successfully")
 
 # %%
+import json
+import os
+
 # Load data from previous phases
-core_noncore = pd.read_csv('core_noncore_split.csv')
-survival_df = pd.read_csv('survival_function_table.csv')
-survival_full = pd.read_csv('survival_curve_full.csv')
+# Load core/non-core allocation from config
+with open('config.json', 'r') as f:
+    config = json.load(f)
 
-# Extract key values
-current_balance = core_noncore[core_noncore['Component'] == 'Total Balance']['Amount'].values[0]
-core_amount = core_noncore[core_noncore['Component'] == 'Core Deposits']['Amount'].values[0]
-non_core_amount = core_noncore[core_noncore['Component'] == 'Non-Core Deposits']['Amount'].values[0]
+current_balance = config['current_balance']
+core_amount = config['core_amount']
+non_core_amount = config['non_core_amount']
 
-print(f"Current Balance:     {current_balance:,.2f}")
+# Load survival data - use advanced if available, otherwise fall back to basic
+if os.path.exists('survival_curve_full_advanced.csv'):
+    survival_full = pd.read_csv('survival_curve_full_advanced.csv')
+    survival_df = pd.read_csv('survival_function_table_advanced.csv')
+    survival_model = config.get('phase_1b_survival_model', {}).get('model', 'Advanced')
+    print(f"Using ADVANCED survival model: {survival_model}")
+else:
+    survival_full = pd.read_csv('survival_curve_full.csv')
+    survival_df = pd.read_csv('survival_function_table.csv')
+    survival_model = 'Basic (Exponential)'
+    print(f"Using basic survival model: {survival_model}")
+
+print(f"\nCurrent Balance:     {current_balance:,.2f}")
 print(f"Core Deposits:       {core_amount:,.2f}  ({core_amount/current_balance*100:.2f}%)")
 print(f"Non-Core Deposits:   {non_core_amount:,.2f}  ({non_core_amount/current_balance*100:.2f}%)")
+print(f"Core/Non-Core Method: {config['method']}")
+
+if 'phase_1b_survival_model' in config:
+    print(f"\nSurvival Model Info:")
+    print(f"  Model:             {config['phase_1b_survival_model']['model']}")
+    print(f"  S(1Y):             {config['phase_1b_survival_model']['survival_1Y']:.4f}  ({config['phase_1b_survival_model']['survival_1Y']*100:.2f}%)")
+    print(f"  S(5Y):             {config['phase_1b_survival_model']['survival_5Y']:.4f}  ({config['phase_1b_survival_model']['survival_5Y']*100:.2f}%)")
+    print(f"  Interpretation:    {config['phase_1b_survival_model']['interpretation']}")
+
 print(f"\nSurvival function loaded with {len(survival_df)} tenors")
 
 # %% [markdown]
@@ -406,6 +429,9 @@ print(f"Total Balance:                    {current_balance:,.2f}")
 print(f"Number of Time Buckets:           {len(buckets_df)}")
 print(f"Time Horizon:                     O/N to 5Y")
 print(f"Weighted Average Maturity:        {weighted_maturity:.3f} years")
+print(f"Survival Model Used:              {survival_model}")
+if 'phase_1b_survival_model' in config:
+    print(f"  S(5Y) of model:                 {config['phase_1b_survival_model']['survival_5Y']*100:.2f}%")
 
 print("\n2. IMMEDIATE REPRICING (O/N)")
 print("-" * 80)

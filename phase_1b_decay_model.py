@@ -827,6 +827,231 @@ for feat in nonsig_features.index:
     print(f"    {feat}: coef={params[feat]:.6f}, p={pvalues[feat]:.4f}")
 
 # %% [markdown]
+# ## 5.5 Phase 1b.2: Stress Period Identification Using Predicted Decay Rates
+#
+# **NEW APPROACH:** Use OLS-predicted decay rates to identify stress periods
+#
+# **Why This Matters:**
+# - Not all days are equal - some have higher withdrawal risk
+# - Stress periods reveal when deposits behave like "non-core"
+# - Can be used in Phase 1c for more sophisticated core/non-core split
+#
+# **Method:**
+# 1. Use OLS predicted decay rates
+# 2. Define stress threshold (e.g., 90th percentile)
+# 3. Identify dates when decay > threshold
+# 4. These are "high-risk" periods for core estimation
+
+# %%
+print("\n" + "="*80)
+print("PHASE 1B.2: STRESS PERIOD IDENTIFICATION")
+print("="*80)
+
+# ========================================
+# CONCEPT: Decay-Based Stress Identification
+# ========================================
+# Instead of using balance minimums only, we identify WHEN deposits
+# behave in a "stressed" or "non-core" manner based on high decay rates.
+#
+# This captures behavioral patterns:
+# - High decay days → Hot money behavior
+# - Low decay days → Sticky deposit behavior
+#
+# We'll test multiple percentile thresholds to define "stress"
+
+# Get predicted decay rates from OLS model (already computed above)
+predicted_decay = fitted
+actual_decay = y
+
+# %%
+# Define stress thresholds at different percentiles
+percentiles = [75, 80, 85, 90, 95]
+stress_analysis = []
+
+print("\nSTRESS PERIOD ANALYSIS - MULTIPLE THRESHOLDS")
+print("="*80)
+
+for pct in percentiles:
+    # Calculate threshold
+    threshold = np.percentile(predicted_decay, pct)
+
+    # Identify stress periods
+    stress_mask = predicted_decay > threshold
+    n_stress_days = stress_mask.sum()
+    pct_stress_days = (n_stress_days / len(predicted_decay)) * 100
+
+    # Balance statistics during stress periods
+    balance_stress = nmd_data.loc[reg_data.index[stress_mask], 'Balance']
+    balance_normal = nmd_data.loc[reg_data.index[~stress_mask], 'Balance']
+
+    min_balance_stress = balance_stress.min() if len(balance_stress) > 0 else np.nan
+    min_balance_normal = balance_normal.min() if len(balance_normal) > 0 else np.nan
+    min_balance_overall = nmd_data['Balance'].min()
+
+    # Average decay in stress vs normal periods
+    avg_decay_stress = predicted_decay[stress_mask].mean() if stress_mask.sum() > 0 else np.nan
+    avg_decay_normal = predicted_decay[~stress_mask].mean() if (~stress_mask).sum() > 0 else np.nan
+
+    stress_analysis.append({
+        'Percentile': pct,
+        'Threshold': threshold,
+        'N_Stress_Days': n_stress_days,
+        'Pct_Stress_Days': pct_stress_days,
+        'Min_Balance_Stress': min_balance_stress,
+        'Min_Balance_Normal': min_balance_normal,
+        'Min_Balance_Overall': min_balance_overall,
+        'Avg_Decay_Stress': avg_decay_stress,
+        'Avg_Decay_Normal': avg_decay_normal,
+        'Decay_Ratio': avg_decay_stress / avg_decay_normal if avg_decay_normal > 0 else np.nan
+    })
+
+    print(f"\nP{pct} Threshold: {threshold:.6f} ({threshold*100:.4f}%)")
+    print(f"  Stress days:           {n_stress_days:>4} ({pct_stress_days:>5.2f}% of sample)")
+    print(f"  Min balance (stress):  ${min_balance_stress:>10,.2f}")
+    print(f"  Min balance (normal):  ${min_balance_normal:>10,.2f}")
+    print(f"  Min balance (overall): ${min_balance_overall:>10,.2f}")
+    print(f"  Avg decay (stress):    {avg_decay_stress:.6f} ({avg_decay_stress*100:.4f}%)")
+    print(f"  Avg decay (normal):    {avg_decay_normal:.6f} ({avg_decay_normal*100:.4f}%)")
+    print(f"  Stress/Normal ratio:   {avg_decay_stress/avg_decay_normal:.2f}x")
+
+stress_df = pd.DataFrame(stress_analysis)
+
+# %%
+# ========================================
+# INTERPRETATION: What Do These Numbers Mean?
+# ========================================
+print("\n" + "="*80)
+print("INTERPRETATION: STRESS PERIOD IDENTIFICATION")
+print("="*80)
+
+print("\nKEY FINDINGS:")
+print("-" * 80)
+
+# Find recommended percentile (90th is standard for stress testing)
+recommended_pct = 90
+rec_row = stress_df[stress_df['Percentile'] == recommended_pct].iloc[0]
+
+print(f"\n1. RECOMMENDED THRESHOLD: {recommended_pct}th Percentile")
+print(f"   → Decay threshold:     {rec_row['Threshold']:.6f} ({rec_row['Threshold']*100:.4f}%)")
+print(f"   → Stress days:         {rec_row['N_Stress_Days']:.0f} days ({rec_row['Pct_Stress_Days']:.1f}% of sample)")
+print(f"   → Min balance (stress): ${rec_row['Min_Balance_Stress']:,.2f}")
+print(f"   → Min balance (overall): ${rec_row['Min_Balance_Overall']:,.2f}")
+
+difference = rec_row['Min_Balance_Stress'] - rec_row['Min_Balance_Overall']
+pct_difference = (difference / rec_row['Min_Balance_Overall']) * 100
+
+if difference > 0:
+    print(f"\n2. STRESS-ADJUSTED CORE ESTIMATE")
+    print(f"   → Stress-based minimum is ${difference:,.2f} HIGHER (+{pct_difference:.1f}%)")
+    print(f"   → This means: Even during high-decay periods, balance stayed above overall minimum")
+    print(f"   → Interpretation: The historical minimum was during a TRUE crisis")
+    print(f"   → Conclusion: Historical minimum method is appropriately conservative")
+else:
+    print(f"\n2. STRESS-ADJUSTED CORE ESTIMATE")
+    print(f"   → Stress-based minimum is ${abs(difference):,.2f} LOWER ({pct_difference:.1f}%)")
+    print(f"   → This means: Historical minimum occurred during normal, not high-decay period")
+    print(f"   → Interpretation: Could use stress-based minimum as more behavioral core estimate")
+
+print(f"\n3. DECAY BEHAVIOR IN STRESS vs NORMAL PERIODS")
+print(f"   → Stress periods decay:  {rec_row['Avg_Decay_Stress']*100:.4f}% per day")
+print(f"   → Normal periods decay:  {rec_row['Avg_Decay_Normal']*100:.4f}% per day")
+print(f"   → Stress/Normal ratio:   {rec_row['Decay_Ratio']:.2f}x")
+print(f"   → Interpretation: Decay is {(rec_row['Decay_Ratio']-1)*100:.0f}% higher during stress")
+
+print("\n4. USAGE IN PHASE 1C (Core/Non-Core Split)")
+print(f"   → Method A (Current): Use overall minimum = ${rec_row['Min_Balance_Overall']:,.2f}")
+print(f"   → Method B (New):     Use stress minimum  = ${rec_row['Min_Balance_Stress']:,.2f}")
+print(f"   → Method C (Hybrid):  Use min(A, B) for maximum conservatism")
+print(f"   → The stress period approach identifies WHEN deposits behave non-core")
+print(f"   → This is more forward-looking than pure historical balance minimum")
+
+# %%
+# Visualize stress periods
+print("\n" + "="*80)
+print("STRESS PERIOD VISUALIZATIONS")
+print("="*80)
+
+# Use 90th percentile for visualization
+stress_threshold_90 = np.percentile(predicted_decay, 90)
+stress_mask_90 = predicted_decay > stress_threshold_90
+
+# ========================================
+# CHART: Predicted Decay Rate with Stress Periods Highlighted
+# ========================================
+fig, axes = plt.subplots(3, 1, figsize=(16, 12))
+
+# Top panel: Predicted decay rate with stress threshold
+axes[0].plot(reg_data.index, predicted_decay, linewidth=0.8, color='#023047',
+            label='OLS Predicted Decay Rate', alpha=0.7)
+axes[0].axhline(y=stress_threshold_90, color='red', linestyle='--', linewidth=2,
+               label=f'Stress Threshold (P90 = {stress_threshold_90:.6f})', alpha=0.8)
+axes[0].fill_between(reg_data.index, predicted_decay, stress_threshold_90,
+                     where=stress_mask_90, alpha=0.3, color='red',
+                     label='Stress Periods')
+axes[0].set_ylabel('Daily Decay Rate', fontsize=11)
+axes[0].set_title('Predicted Decay Rate with Stress Period Identification (P90 Threshold)',
+                 fontsize=13, fontweight='bold')
+axes[0].legend(fontsize=10, loc='upper right')
+axes[0].grid(True, alpha=0.3)
+
+# Middle panel: Balance during stress vs normal periods
+balance_series = nmd_data.loc[reg_data.index, 'Balance']
+axes[1].plot(reg_data.index, balance_series, linewidth=1, color='#2A9D8F',
+            label='Balance', alpha=0.7)
+axes[1].scatter(reg_data.index[stress_mask_90], balance_series[stress_mask_90],
+               color='red', s=5, alpha=0.6, label='Stress Periods', zorder=5)
+axes[1].axhline(y=rec_row['Min_Balance_Overall'], color='blue', linestyle='--',
+               linewidth=2, label=f'Overall Min: ${rec_row["Min_Balance_Overall"]:,.0f}')
+axes[1].axhline(y=rec_row['Min_Balance_Stress'], color='red', linestyle='--',
+               linewidth=2, label=f'Stress Min: ${rec_row["Min_Balance_Stress"]:,.0f}')
+axes[1].set_ylabel('Balance ($)', fontsize=11)
+axes[1].set_title('Balance Time Series: Stress vs Normal Periods',
+                 fontsize=13, fontweight='bold')
+axes[1].legend(fontsize=10, loc='best')
+axes[1].grid(True, alpha=0.3)
+
+# Bottom panel: Distribution comparison
+axes[2].hist(predicted_decay[~stress_mask_90], bins=50, alpha=0.6, color='#2A9D8F',
+            edgecolor='black', label=f'Normal Periods (n={(~stress_mask_90).sum()})')
+axes[2].hist(predicted_decay[stress_mask_90], bins=50, alpha=0.6, color='#E63946',
+            edgecolor='black', label=f'Stress Periods (n={stress_mask_90.sum()})')
+axes[2].axvline(x=stress_threshold_90, color='red', linestyle='--', linewidth=2,
+               label=f'P90 Threshold: {stress_threshold_90:.6f}')
+axes[2].set_xlabel('Predicted Decay Rate', fontsize=11)
+axes[2].set_ylabel('Frequency', fontsize=11)
+axes[2].set_title('Distribution: Normal vs Stress Period Decay Rates',
+                 fontsize=13, fontweight='bold')
+axes[2].legend(fontsize=10)
+axes[2].grid(True, alpha=0.3, axis='y')
+
+plt.tight_layout()
+plt.show()
+
+print("\n✓ Stress period visualization created")
+print("  → Red areas show high-decay (stress) periods")
+print("  → These periods identify when deposits behave like 'hot money'")
+
+# %%
+# Save stress analysis results
+stress_df.to_csv('stress_period_analysis.csv', index=False)
+
+# Save stress period flags for Phase 1c
+stress_periods_output = pd.DataFrame({
+    'Date': nmd_data.loc[reg_data.index, 'Date'].values,
+    'Balance': balance_series.values,
+    'Predicted_Decay': predicted_decay,
+    'Stress_P90': stress_mask_90,
+    'Stress_P95': predicted_decay > np.percentile(predicted_decay, 95),
+    'Stress_P85': predicted_decay > np.percentile(predicted_decay, 85)
+})
+stress_periods_output.to_csv('stress_periods_identified.csv', index=False)
+
+print("\nAdditional data saved:")
+print("- stress_period_analysis.csv (summary by percentile)")
+print("- stress_periods_identified.csv (daily stress flags)")
+print("\n→ These files can be used in Phase 1c for decay-based core estimation")
+
+# %% [markdown]
 # ## 6. Summary and Export Results
 
 # %%

@@ -1,0 +1,246 @@
+================================================================================
+PHASE 1B ADVANCED: SURVIVAL ANALYSIS MODELS
+================================================================================
+
+Libraries imported successfully
+
+Loaded NMD data: (2556, 17)
+Date range: 31-Dec-2016 to 30-Dec-2023
+Total days: 2555
+
+================================================================================
+SURVIVAL DATA PREPARATION
+================================================================================
+Initial Balance:          10,000.00
+Final Balance:            18,651.70
+Growth:                   86.52%
+Minimum Balance:          9,510.98
+Number of withdrawal days: 1482
+
+================================================================================
+MODEL 1: WEIBULL SURVIVAL MODEL
+================================================================================
+
+Formula:
+  S(t) = exp(-(t/λ)^k)
+  λ = scale parameter (characteristic life)
+  k = shape parameter:
+    - k < 1: Decreasing hazard (deposits MORE stable over time)
+    - k = 1: Constant hazard (exponential)
+    - k > 1: Increasing hazard (deposits LESS stable over time)
+
+Estimated Parameters:
+  Scale (λ):           25550.00 days
+  Shape (k):           0.2970
+  Interpretation:      DECREASING hazard (deposits more stable over time) ✓
+
+Model Fit:
+  R²:                  -1.0164
+  RMSE:                0.2036
+
+Survival Rates:
+  S(365 days):         0.7534  (75.34%)
+  S(1825 days = 5Y):   0.6334  (63.34%)
+
+================================================================================
+MODEL 2: KAPLAN-MEIER ESTIMATOR
+================================================================================
+
+Non-parametric estimator - purely data-driven
+Estimates survival probability at each observed time point
+
+Kaplan-Meier Empirical Survival:
+  S(365 days):         0.5099
+  S(1825 days = 5Y):   0.5099
+  Method:              Empirical retention based on cumulative minimum
+
+================================================================================
+MODEL 3: LOG-NORMAL SURVIVAL MODEL
+================================================================================
+
+Formula:
+  S(t) = 1 - Φ((ln(t) - μ) / σ)
+  where Φ is the standard normal CDF
+  Fat-tailed distribution → longer survival times
+
+Estimated Parameters:
+  μ (location):        9.7593
+  σ (scale):           5.0000
+  Median survival:     17314.86 days
+
+Model Fit:
+  R²:                  -0.9060
+  RMSE:                0.1979
+
+Survival Rates:
+  S(365 days):         0.7799  (77.99%)
+  S(1825 days = 5Y):   0.6736  (67.36%)
+
+================================================================================
+MODEL 4: LOG-LOGISTIC SURVIVAL MODEL
+================================================================================
+
+Formula:
+  S(t) = 1 / (1 + (t/α)^β)
+  α = scale, β = shape
+  Allows non-monotonic hazard (can increase then decrease)
+
+Estimated Parameters:
+  α (scale):           10000.00
+  β (shape):           0.2534
+  Median survival:     10000.00 days
+
+Model Fit:
+  R²:                  -0.8954
+  RMSE:                0.1974
+
+Survival Rates:
+  S(365 days):         0.6982  (69.82%)
+  S(1825 days = 5Y):   0.6061  (60.61%)
+
+================================================================================
+MODEL 5: EXPONENTIAL SURVIVAL (BASELINE)
+================================================================================
+
+Original Phase 1b model:
+  S(t) = (1 - λ)^t
+  Constant hazard rate
+
+Parameter:
+  λ (daily decay):     0.018552  (1.8552%)
+
+Model Fit:
+  R²:                  -23.0127
+  RMSE:                0.7026
+
+Survival Rates:
+  S(365 days):         0.0011  (0.11%)
+  S(1825 days = 5Y):   0.0000  (0.00%)
+
+================================================================================
+MODEL 6: CONSTANT/FLAT SURVIVAL (REGULATORY)
+================================================================================
+
+Assumption: Stable core deposits have FLAT survival
+  S(t) = constant (no decay)
+  Based on core ratio from Phase 1c
+
+Parameter:
+  Core Ratio:          0.8357  (83.57%)
+  Assumption:          Core deposits NEVER decay (stable)
+
+Survival Rates:
+  S(365 days):         0.8357  (83.57%)
+  S(1825 days = 5Y):   0.8357  (83.57%)
+
+  → This gives MAXIMUM allocation to 5Y bucket
+
+================================================================================
+MODEL COMPARISON
+================================================================================
+
+
+                        Model   S(1Y)_%      S(5Y)_%         R²                              Interpretation
+    1. Exponential (Baseline)  0.107530 1.437612e-13 -23.012738              Fast decay - LOW 5Y allocation
+                   2. Weibull 75.343240 6.334082e+01  -1.016387                           Decreasing hazard
+              3. Kaplan-Meier 50.992553 5.099255e+01        NaN                 Non-parametric, data-driven
+                4. Log-Normal 77.990860 6.736437e+01  -0.906033           Fat-tailed - HIGHER 5Y allocation
+              5. Log-Logistic 69.821803 6.061159e+01  -0.895419                        Non-monotonic hazard
+6. Flat/Constant (Regulatory) 83.565411 8.356541e+01        NaN Stable core (83.6%) - MAXIMUM 5Y allocation
+
+================================================================================
+RECOMMENDATION
+================================================================================
+
+Recommended Model: KAPLAN-MEIER (CONSERVATIVE)
+  S(1Y):               0.51%
+  S(5Y):               50.99%
+
+Why Kaplan-Meier?
+  ✓ Non-parametric, PURELY DATA-DRIVEN
+  ✓ No distributional assumptions
+  ✓ CONSERVATIVE approach (worst-case scenario)
+  ✓ Based on empirical retention relative to cumulative minimum
+  ✓ S(5Y)=50.99% is LOWEST among realistic models (prudent estimate)
+  ✓ Defensible for regulatory/risk management (not over-optimistic)
+
+================================================================================
+FILES EXPORTED
+================================================================================
+1. survival_curve_full_advanced.csv
+   → Full survival curve (0-5 years) - RECOMMENDED MODEL for Phase 2
+
+2. survival_function_table_advanced.csv
+   → Survival at key tenors - RECOMMENDED MODEL
+
+3. survival_models_comparison.csv
+   → Comparison summary of all models
+
+4. survival_models_comparison.png
+   → Visualization of all models
+
+5. survival_models_all_results.xlsx ⭐ NEW
+   → Excel file with ALL models' S(t) curves
+   → Sheet 1: All survival curves (day-by-day)
+   → Sheet 2: Key tenors comparison across all models
+   → Sheet 3: Model comparison summary
+
+6. config.json (UPDATED)
+   → Added Phase 1b survival model configuration
+   → Model: Kaplan-Meier
+   → Parameters saved for reproducibility
+
+================================================================================
+RECOMMENDED MODEL FOR PHASE 2
+================================================================================
+Model:               Kaplan-Meier
+S(1Y):               0.5099  (50.99%)
+S(5Y):               0.5099  (50.99%)
+
+Kaplan-Meier Characteristics:
+  Method:            Non-parametric empirical estimator
+  Interpretation:    CONSERVATIVE - based on historical minimum retention
+  Advantage:         No distributional assumptions, purely data-driven
+
+This survival function will be used in Phase 2 for cash flow slotting
+S(t) curve saved to: survival_curve_full_advanced.csv
+All models saved to: survival_models_all_results.xlsx
+Config updated:      config.json (Phase 1b parameters)
+
+================================================================================
+PHASE 1B ADVANCED - SUMMARY
+================================================================================
+
+1. WHY ADVANCED MODELS?
+--------------------------------------------------------------------------------
+  • Original exponential decay assumes constant hazard
+  • Results in fast decay → low 5Y allocation
+  • Advanced models allow flexible hazard → flatter S(t) → more 5Y allocation
+
+2. MODELS TESTED:
+--------------------------------------------------------------------------------
+  • 1. Exponential (Baseline)                 S(5Y) =  0.00%
+  • 2. Weibull                                S(5Y) = 63.34%
+  • 3. Kaplan-Meier                           S(5Y) = 50.99%
+  • 4. Log-Normal                             S(5Y) = 67.36%
+  • 5. Log-Logistic                           S(5Y) = 60.61%
+  • 6. Flat/Constant (Regulatory)             S(5Y) = 83.57%
+
+3. IMPACT ON PHASE 2 ALLOCATION:
+--------------------------------------------------------------------------------
+  Baseline (Exponential):      S(5Y) = 0.00%
+  Recommended (Kaplan-Meier):    S(5Y) = 50.99%
+  Improvement:                 +50.99 percentage points
+
+  → Expected 5Y allocation increase: Massive improvement from near-zero
+
+4. NEXT STEPS:
+--------------------------------------------------------------------------------
+  • Update Phase 2 to use 'survival_curve_full_advanced.csv'
+  • Re-run Phase 2 cash flow slotting
+  • Verify increased allocation to 5Y bucket
+  • Proceed to Phase 3 (EVE) and Phase 4 (NII)
+
+================================================================================
+PHASE 1B ADVANCED COMPLETE ✓
+================================================================================
