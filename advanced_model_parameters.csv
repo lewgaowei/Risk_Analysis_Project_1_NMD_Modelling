@@ -1,0 +1,11 @@
+Model,Parameter,Value
+OLS Exponential Decay,Core Level,"25,647.17"
+OLS Exponential Decay,Decay Rate (λ),0.000417
+OLS Exponential Decay,Half-Life (years),4.55
+Mean Reversion,Long-Run Mean (θ),"18,365.88"
+Mean Reversion,Reversion Speed (κ),0.001311
+Kalman Filter,Process Variance (Q),10
+Kalman Filter,Measurement Variance (R),1000
+Ensemble,Median Core,"18,365.88"
+Ensemble,Mean Core,"17,291.80"
+Ensemble,Weighted Core,"16,209.90"

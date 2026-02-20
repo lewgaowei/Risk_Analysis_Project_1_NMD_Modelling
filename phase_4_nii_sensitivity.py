@@ -5,12 +5,47 @@
 #
 # **Calculation Date:** 30-Dec-2023
 #
+# **WHAT IS NII?**
+# NII = Net Interest Income = Interest earned - Interest paid
+# It measures the bank's SHORT-TERM earnings (next 12 months)
+#
+# **EVE vs NII - What's the Difference?**
+#
+# | Metric | Time Horizon | What It Measures | Why It Matters |
+# |--------|--------------|------------------|----------------|
+# | **EVE** | Long-term (ALL cash flows) | Economic value | Will bank survive? (solvency) |
+# | **NII** | Short-term (12 months) | Earnings | Will bank be profitable this year? |
+#
+# **ANALOGY:**
+# - EVE = Your total retirement portfolio value
+# - NII = Your salary this year
+# Both matter! You need income today AND wealth for the future.
+#
+# **WHY ONLY 12 MONTHS?**
+# NII looks at earnings impact over the next year, so we only include
+# buckets that REPRICE within 1 year:
+# - O/N, 1M, 2M, 3M, 6M, 9M, 1Y ✓ (included)
+# - 2Y, 3Y, 4Y, 5Y ✗ (excluded)
+#
+# **THE FORMULA:**
+# ΔNII = Σ [CF(i) × shock(t_i) × (1 - t_i)]
+#
+# The (1 - t_i) factor accounts for "how much of the year is left"
+#
+# **EXAMPLE for 3M bucket:**
+# - CF = $5,000
+# - Shock = +2% (200bps rate increase)
+# - t = 0.25 years (3 months)
+# - Time remaining = 1 - 0.25 = 0.75 years
+# - ΔNII = $5,000 × 0.02 × 0.75 = $75
+# → You earn an extra $75 over the next 12 months
+#
 # This notebook performs:
 # - Calculate NII impact for buckets repricing within 12 months
 # - Apply same 4 rate shock scenarios as Phase 3
 # - Calculate ΔNII (change in net interest income)
 # - Identify worst-case NII scenario
-# - Compare EVE vs NII binding constraints
+# - Compare EVE vs NII binding constraints (might be different!)
 # - Generate combined IRRBB summary report
 
 # %% [markdown]

@@ -1,0 +1,4 @@
+Component,Amount,Percentage,Behavioral_Maturity,Repricing,Method
+Total Balance,18651.70481694874,100.0,N/A,N/A,N/A
+Core Deposits,16209.90024541218,86.90841081015984,5 Years Max,Distributed 1M-5Y,Advanced Ensemble
+Non-Core Deposits,2441.804571536559,13.09158918984017,O/N,Immediate (O/N),Advanced Ensemble

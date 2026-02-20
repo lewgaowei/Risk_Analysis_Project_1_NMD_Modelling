@@ -5,6 +5,32 @@
 #
 # **Calculation Date:** 30-Dec-2023
 #
+# **WHAT ARE WE DOING HERE?**
+# Distributing our $18,652 deposit balance into 11 time buckets based on
+# WHEN we expect the deposits to reprice (i.e., when customers might withdraw).
+#
+# **WHY?**
+# We need to know the TIMING of cash flows to:
+# 1. Calculate present value (earlier CF = higher PV)
+# 2. Measure repricing risk (what's exposed to rate changes?)
+# 3. Meet Basel reporting requirements
+#
+# **THE 11 BUCKETS:**
+# O/N, 1M, 2M, 3M, 6M, 9M, 1Y, 2Y, 3Y, 4Y, 5Y
+#
+# **THE SLOTTING RULE:**
+# - Non-Core → ALL goes to O/N (reprices immediately)
+# - Core → Distributed using survival function S(t)
+#
+# **FORMULA:**
+# Cash Flow in bucket i = Core × [S(t_start) - S(t_end)]
+#
+# **EXAMPLE for 1Y bucket (9M to 1Y):**
+# S(270 days) = 0.65  (65% survive to 9 months)
+# S(365 days) = 0.60  (60% survive to 1 year)
+# CF = 9,511 × (0.65 - 0.60) = 475.55
+# → $475.55 will reprice between 9 months and 1 year
+#
 # This notebook performs:
 # - Define standard IRRBB time buckets
 # - Slot non-core deposits into O/N bucket
@@ -32,19 +58,42 @@ plt.rcParams['font.size'] = 10
 print("Libraries imported successfully")
 
 # %%
+import json
+import os
+
 # Load data from previous phases
-core_noncore = pd.read_csv('core_noncore_split.csv')
-survival_df = pd.read_csv('survival_function_table.csv')
-survival_full = pd.read_csv('survival_curve_full.csv')
+# Load core/non-core allocation from config
+with open('config.json', 'r') as f:
+    config = json.load(f)
 
-# Extract key values
-current_balance = core_noncore[core_noncore['Component'] == 'Total Balance']['Amount'].values[0]
-core_amount = core_noncore[core_noncore['Component'] == 'Core Deposits']['Amount'].values[0]
-non_core_amount = core_noncore[core_noncore['Component'] == 'Non-Core Deposits']['Amount'].values[0]
+current_balance = config['current_balance']
+core_amount = config['core_amount']
+non_core_amount = config['non_core_amount']
 
-print(f"Current Balance:     {current_balance:,.2f}")
+# Load survival data - use advanced if available, otherwise fall back to basic
+if os.path.exists('survival_curve_full_advanced.csv'):
+    survival_full = pd.read_csv('survival_curve_full_advanced.csv')
+    survival_df = pd.read_csv('survival_function_table_advanced.csv')
+    survival_model = config.get('phase_1b_survival_model', {}).get('model', 'Advanced')
+    print(f"Using ADVANCED survival model: {survival_model}")
+else:
+    survival_full = pd.read_csv('survival_curve_full.csv')
+    survival_df = pd.read_csv('survival_function_table.csv')
+    survival_model = 'Basic (Exponential)'
+    print(f"Using basic survival model: {survival_model}")
+
+print(f"\nCurrent Balance:     {current_balance:,.2f}")
 print(f"Core Deposits:       {core_amount:,.2f}  ({core_amount/current_balance*100:.2f}%)")
 print(f"Non-Core Deposits:   {non_core_amount:,.2f}  ({non_core_amount/current_balance*100:.2f}%)")
+print(f"Core/Non-Core Method: {config['method']}")
+
+if 'phase_1b_survival_model' in config:
+    print(f"\nSurvival Model Info:")
+    print(f"  Model:             {config['phase_1b_survival_model']['model']}")
+    print(f"  S(1Y):             {config['phase_1b_survival_model']['survival_1Y']:.4f}  ({config['phase_1b_survival_model']['survival_1Y']*100:.2f}%)")
+    print(f"  S(5Y):             {config['phase_1b_survival_model']['survival_5Y']:.4f}  ({config['phase_1b_survival_model']['survival_5Y']*100:.2f}%)")
+    print(f"  Interpretation:    {config['phase_1b_survival_model']['interpretation']}")
+
 print(f"\nSurvival function loaded with {len(survival_df)} tenors")
 
 # %% [markdown]
@@ -129,8 +178,14 @@ for idx, row in buckets_df.iterrows():
         # O/N bucket gets all non-core + marginal core decay from day 0 to 1
         core_cf = core_amount * (s_start - s_end)
         total_cf = non_core_amount + core_cf
+    elif bucket_name == '5Y':
+        # 5Y bucket gets marginal decay (4Y-5Y) + residual beyond 5Y (Basel cap)
+        marginal_decay = core_amount * (s_start - s_end)
+        residual_beyond_5y = core_amount * s_end  # S(1825) remainder - everything surviving beyond 5Y
+        core_cf = marginal_decay + residual_beyond_5y
+        total_cf = core_cf
     else:
-        # Other buckets get marginal core decay
+        # Other buckets get marginal core decay only
         core_cf = core_amount * (s_start - s_end)
         total_cf = core_cf
 
@@ -155,6 +210,8 @@ repricing_profile['CF_Percent'] = (repricing_profile['Total_CF'] / current_balan
 
 # Verify total matches current balance
 total_cf = repricing_profile['Total_CF'].sum()
+total_core_cf = repricing_profile['Core_CF'].sum()
+
 print("\n" + "="*80)
 print("CASH FLOW SLOTTING RESULTS")
 print("="*80)
@@ -162,6 +219,25 @@ print(f"Total Cash Flows:        {total_cf:,.2f}")
 print(f"Current Balance:         {current_balance:,.2f}")
 print(f"Difference:              {abs(total_cf - current_balance):,.6f}")
 print(f"Match: {'✓ PASS' if abs(total_cf - current_balance) < 0.01 else '✗ FAIL'}")
+
+print(f"\nCore Allocation Check:")
+print(f"Total Core CF:           {total_core_cf:,.2f}")
+print(f"Expected Core:           {core_amount:,.2f}")
+print(f"Difference:              {abs(total_core_cf - core_amount):,.6f}")
+print(f"Match: {'✓ PASS' if abs(total_core_cf - core_amount) < 0.01 else '✗ FAIL'}")
+
+# Show 5Y bucket breakdown
+five_y_row = repricing_profile[repricing_profile['Bucket'] == '5Y'].iloc[0]
+s_5y = five_y_row['S(t_end)']
+marginal_5y = core_amount * five_y_row['Marginal_Decay']
+residual_5y = core_amount * s_5y
+
+print(f"\n5Y Bucket Breakdown (Basel 5Y Cap):")
+print(f"  Marginal decay (4Y-5Y):   {marginal_5y:,.2f}  ({marginal_5y/core_amount*100:.2f}% of core)")
+print(f"  Residual (beyond 5Y):     {residual_5y:,.2f}  ({residual_5y/core_amount*100:.2f}% of core)")
+print(f"  Total 5Y allocation:      {five_y_row['Core_CF']:,.2f}  ({five_y_row['CF_Percent']:.2f}% of balance)")
+print(f"\n  → S(5Y) = {s_5y*100:.2f}% of deposits survive beyond 5 years")
+print(f"  → Per Basel, these are capped at 5Y maturity")
 
 # %% [markdown]
 # ### 4.2 Repricing Profile Table
@@ -380,6 +456,9 @@ print(f"Total Balance:                    {current_balance:,.2f}")
 print(f"Number of Time Buckets:           {len(buckets_df)}")
 print(f"Time Horizon:                     O/N to 5Y")
 print(f"Weighted Average Maturity:        {weighted_maturity:.3f} years")
+print(f"Survival Model Used:              {survival_model}")
+if 'phase_1b_survival_model' in config:
+    print(f"  S(5Y) of model:                 {config['phase_1b_survival_model']['survival_5Y']*100:.2f}%")
 
 print("\n2. IMMEDIATE REPRICING (O/N)")
 print("-" * 80)

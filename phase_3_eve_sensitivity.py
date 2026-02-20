@@ -5,12 +5,48 @@
 #
 # **Calculation Date:** 30-Dec-2023
 #
+# **WHAT IS EVE?**
+# EVE = Economic Value of Equity
+# It's the LONG-TERM economic value of the bank's balance sheet
+#
+# **WHY DO WE CALCULATE EVE?** (Your main question!)
+#
+# 1. **Long-Term Solvency:** Will the bank survive if rates change dramatically?
+#    - If EVE drops 30%, the bank might become insolvent!
+#    - This is different from accounting book value
+#
+# 2. **Basel Regulatory Requirement:**
+#    - Banks MUST report if |ΔEVE| > 15% of Tier 1 Capital
+#    - This flags "outlier" banks with too much interest rate risk
+#
+# 3. **Risk Management:**
+#    - Helps decide hedging strategy (swaps, futures)
+#    - Guides asset/liability management decisions
+#
+# **THE FORMULA:**
+# EVE = Σ [Cash Flow(i) × Discount Factor(i)]
+#
+# ΔEVE = EVE_shocked - EVE_base
+#
+# **EXAMPLE:**
+# Base EVE = $18,500
+# After +200bps shock: EVE = $18,300
+# ΔEVE = -$200 (-1.08%)
+# → Bank lost $200 in economic value due to rate rise
+#
+# **WHY 4 SCENARIOS?**
+# Rates can move in different ways:
+# - Parallel shift (all rates move same amount)
+# - Steepener (short rates ↑ more than long)
+# - Flattener (short ↑, long ↓)
+# We test all to find worst case!
+#
 # This notebook performs:
 # - Build discount factors from zero rate curve
-# - Calculate base case EVE (present value of cash flows)
-# - Apply 4 rate shock scenarios
-# - Calculate ΔEVE for each scenario
-# - Identify worst-case EVE impact
+# - Calculate base case EVE (present value of all cash flows)
+# - Apply 4 rate shock scenarios (+200bps, -200bps, Steepener, Flattener)
+# - Calculate ΔEVE for each scenario (the change in economic value)
+# - Identify worst-case EVE impact (binding constraint)
 # - Visualize yield curves and sensitivity results
 
 # %% [markdown]
@@ -35,6 +71,11 @@ print("Libraries imported successfully")
 
 # %%
 # Load data from previous phases
+# ========================================
+# INPUT FILES:
+# 1. repricing_profile.csv - Cash flows distributed into 11 time buckets (from Phase 2)
+# 2. processed_curve_data.csv - Zero rate curve with 16 tenors (from Phase 0)
+# ========================================
 repricing_profile = pd.read_csv('repricing_profile.csv')
 curve_data = pd.read_csv('processed_curve_data.csv')
 
@@ -43,6 +84,16 @@ print(f"Zero Rate Curve:   {len(curve_data)} tenors")
 print(f"\nTotal Cash Flow:   {repricing_profile['Total_CF'].sum():,.2f}")
 
 # Display curve data
+# ========================================
+# INTERPRETATION: Zero Rate Curve
+# ========================================
+# - Tenor: Time period (e.g., "1M", "1Y", "5Y")
+# - Tenor_Years: Tenor in years (e.g., 0.083 = 1 month, 1.0 = 1 year, 5.0 = 5 years)
+# - ZeroRate: Interest rate for zero-coupon bonds at that tenor (decimal form)
+#
+# Example: If 5Y ZeroRate = 0.026357 (2.64%), then:
+# - $100 received in 5 years is worth: $100 / (1.026357)^5 = $87.80 today
+# ========================================
 print("\nBase Zero Rate Curve:")
 print(curve_data[['Tenor', 'Tenor_Years', 'ZeroRate']])
 
@@ -57,21 +108,38 @@ print(curve_data[['Tenor', 'Tenor_Years', 'ZeroRate']])
 # - Use interpolation for intermediate tenors
 
 # %%
-# Create interpolation function for zero rates
-# Using log-linear interpolation on discount factors (industry standard)
+# ========================================
+# CONCEPT: Discount Factors and Present Value
+# ========================================
+# Why do we need discount factors?
+# $100 received in 5 years is worth LESS than $100 today!
+#
+# Discount Factor Formula: DF(t) = 1 / (1 + r)^t
+#
+# Example:
+# r = 4% (zero rate at 5Y)
+# DF(5) = 1 / (1.04)^5 = 0.8219
+# $100 in 5 years = $100 × 0.8219 = $82.19 today
+#
+# Why log-linear interpolation?
+# - Industry standard (smoother than linear)
+# - Prevents arbitrage opportunities
+# - Better matches market behavior
 
 def build_discount_function(tenors_years, zero_rates):
     """
-    Build interpolated discount factor function
+    Build interpolated discount factor function using log-linear method
 
     Args:
-        tenors_years: array of tenors in years
-        zero_rates: array of zero rates (decimal form)
+        tenors_years: array of tenors in years (e.g., [0.003, 0.083, 0.25, ...])
+        zero_rates: array of zero rates in decimal form (e.g., 0.03 for 3%)
 
     Returns:
-        function that takes time in years and returns discount factor
+        function that takes time t in years and returns discount factor DF(t)
     """
-    # Calculate discount factors at known tenors
+    # Step 1: Calculate discount factors at known tenors
+    # DF(t) = 1 / (1 + r)^t
+    # This converts interest rates to present value multipliers
     discount_factors = 1 / (1 + zero_rates) ** tenors_years
 
     # Create log-linear interpolation on discount factors
@@ -93,6 +161,21 @@ df_base_func = build_discount_function(curve_data['Tenor_Years'].values,
                                        curve_data['ZeroRate'].values)
 
 # Test discount function at bucket midpoints
+# ========================================
+# INTERPRETATION: Discount Factors by Bucket
+# ========================================
+# DF = Discount Factor (how much $1 in the future is worth today)
+#
+# Key observations:
+# - DF close to 1.0 → Cash flow happens soon, minimal discount
+# - DF far from 1.0 → Cash flow happens later, larger discount
+#
+# Example interpretation:
+# - O/N bucket (t=0.003y): DF=0.9999 → $1,000 tomorrow worth $999.91 today
+# - 5Y bucket (t=4.5y): DF=0.8891 → $1,000 in 4.5 years worth $889.10 today
+#
+# Lower DF = more time value lost = more sensitive to rate changes!
+# ========================================
 print("="*80)
 print("DISCOUNT FACTORS AT BUCKET MIDPOINTS (BASE CURVE)")
 print("="*80)
@@ -141,6 +224,29 @@ repricing_profile['PV_Base'] = repricing_profile['Total_CF'] * repricing_profile
 
 eve_base = repricing_profile['PV_Base'].sum()
 
+# ========================================
+# INTERPRETATION: Base Case EVE Calculation
+# ========================================
+# EVE (Economic Value of Equity) = Present value of all future deposit cash flows
+#
+# FORMULA: EVE = Σ [Cash Flow(i) × Discount Factor(i)]
+#
+# COLUMN MEANINGS:
+# - Total_CF: Undiscounted cash flow in each bucket (from Phase 2)
+# - DF_Base: Discount factor at bucket midpoint (present value multiplier)
+# - PV_Base: Present value = Total_CF × DF_Base
+#
+# KEY METRICS:
+# - Total Cash Flow (undiscounted): Sum of all deposit balances = $18,651.70
+# - EVE Base (present value): What those deposits are worth TODAY = $18,604.05
+# - Discount Effect: Time value lost = $47.66 (only 0.26% loss due to short duration!)
+# - Average Discount: 0.9974 (very close to 1.0 → most deposits reprice quickly)
+#
+# INTERPRETATION:
+# → Our deposits have VERY SHORT duration (mostly in O/N and 1M buckets)
+# → Most cash flows happen soon, so time value loss is minimal
+# → This means deposits reprice quickly when rates change
+# ========================================
 print("="*80)
 print("BASE CASE EVE CALCULATION")
 print("="*80)
@@ -206,6 +312,36 @@ def apply_flattener_shock(tenors_years, zero_rates):
     shocked_rates = zero_rates + shocks / 10000
     return np.maximum(shocked_rates, 0)
 
+# ========================================
+# INTERPRETATION: Rate Shock Scenarios
+# ========================================
+# Why test 4 different scenarios?
+# → Interest rates don't just move up/down uniformly!
+# → Different scenarios test different types of curve movements
+# → We need to find the WORST CASE for regulatory reporting
+#
+# SCENARIO 1: +200bps Parallel
+# - All rates increase by 200 basis points (2%)
+# - Tests: What if central bank aggressively raises rates?
+# - Impact: Higher discount rates → Lower present values → EVE DOWN
+#
+# SCENARIO 2: -200bps Parallel
+# - All rates decrease by 200 basis points (with zero floor)
+# - Tests: What if central bank cuts rates to zero?
+# - Impact: Lower discount rates → Higher present values → EVE UP
+#
+# SCENARIO 3: Steepener (Short Rate Up)
+# - Short rates ↑ 200bps, long rates unchanged
+# - Tests: What if short-term rates spike but long-term expectations stable?
+# - Impact: Hurts short-dated cash flows most
+#
+# SCENARIO 4: Flattener
+# - Short rates ↑ 200bps, long rates ↓ 100bps (curve flattens)
+# - Tests: What if inversion/flattening occurs?
+# - Impact: Complex - short end hurts, long end helps
+#
+# BINDING CONSTRAINT: The worst scenario determines regulatory capital needs!
+# ========================================
 print("="*80)
 print("RATE SHOCK SCENARIO DEFINITIONS")
 print("="*80)
@@ -396,6 +532,59 @@ eve_summary = pd.DataFrame({
     'ΔEVE_%': [0, pct_delta_s1, pct_delta_s2, pct_delta_s3, pct_delta_s4]
 })
 
+# ========================================
+# INTERPRETATION: EVE Sensitivity Summary Table
+# ========================================
+# This is the MAIN OUTPUT TABLE for regulatory reporting!
+#
+# COLUMN MEANINGS:
+#
+# 1. Scenario: Which rate shock scenario
+#    - Base Case: No shock (current rates)
+#    - S1-S4: Four different rate shock scenarios
+#
+# 2. EVE: Economic Value of Equity under that scenario
+#    - Present value of all deposit cash flows
+#    - Measured in dollars ($)
+#    - Higher EVE = Better (more economic value)
+#
+# 3. ΔEVE: Change in EVE from base case (EVE_shocked - EVE_base)
+#    - Measured in dollars ($)
+#    - Negative ΔEVE = Loss in economic value (BAD)
+#    - Positive ΔEVE = Gain in economic value (GOOD)
+#
+# 4. ΔEVE_%: Percentage change in EVE from base case
+#    - Formula: (ΔEVE / EVE_base) × 100
+#    - This % is compared to Basel threshold (15% of Tier 1 Capital)
+#    - If |ΔEVE_%| > 15% of capital → "Outlier bank" status
+#
+# HOW TO INTERPRET THE RESULTS:
+#
+# Base Case EVE = $18,604.05
+# → This is what our deposits are worth at current rates
+#
+# S1 (+200bps): ΔEVE = -$28.84 (-0.15%)
+# → If all rates ↑ 2%, we LOSE $28.84 in economic value
+# → Why? Higher discount rates reduce present values
+# → This is our WORST CASE (binding constraint)
+#
+# S2 (-200bps): ΔEVE = +$29.57 (+0.16%)
+# → If all rates ↓ 2%, we GAIN $29.57 in economic value
+# → Why? Lower discount rates increase present values
+# → This is our BEST CASE
+#
+# S3 (Steepener): ΔEVE = -$27.89 (-0.15%)
+# → Short rate spike hurts, but less than parallel shift
+#
+# S4 (Flattener): ΔEVE = -$26.93 (-0.14%)
+# → Mixed effects (short hurts, long helps)
+#
+# KEY INSIGHT: We are "ASSET-SENSITIVE"
+# → Rising rates HURT us (negative ΔEVE)
+# → Falling rates HELP us (positive ΔEVE)
+# → Why? Short duration deposits reprice quickly
+# → This is opposite of what happens to NII (Phase 4)!
+# ========================================
 print("\n" + "="*80)
 print("EVE SENSITIVITY SUMMARY")
 print("="*80)
@@ -407,6 +596,33 @@ worst_case_scenario = eve_summary.loc[worst_case_idx, 'Scenario']
 worst_case_delta = eve_summary.loc[worst_case_idx, 'ΔEVE']
 worst_case_pct = eve_summary.loc[worst_case_idx, 'ΔEVE_%']
 
+# ========================================
+# INTERPRETATION: Worst Case EVE Scenario
+# ========================================
+# BINDING CONSTRAINT: The scenario with the largest NEGATIVE ΔEVE
+#
+# RESULT: S1 (+200bps Parallel) is our worst case
+# - EVE Loss: $28.84 (0.15% of base EVE)
+# - This means a 2% parallel rate increase costs us $28.84
+#
+# REGULATORY CONTEXT (Basel IRRBB):
+# - Banks must report if |ΔEVE| > 15% of Tier 1 Capital
+# - Our loss: 0.15% of EVE base = $28.84
+# - If Tier 1 Capital = $1,000, threshold = $150
+# - $28.84 < $150 → We PASS (not an outlier bank)
+#
+# BUSINESS MEANING:
+# → We are vulnerable to RISING interest rates
+# → Short duration deposits reprice quickly
+# → When rates ↑, present values ↓ (higher discount factors)
+# → This is called "Asset-Sensitive Position"
+#
+# WHAT WOULD A BANK DO?
+# 1. Hedge: Buy interest rate swaps to offset risk
+# 2. Duration gap: Adjust asset/liability mix
+# 3. Capital: Hold more capital as buffer
+# 4. Monitor: Track rate movements closely
+# ========================================
 print("\n" + "="*80)
 print("WORST CASE EVE SCENARIO")
 print("="*80)
@@ -529,6 +745,46 @@ delta_y = 0.02  # 200bps = 0.02
 effective_duration = (eve_s2 - eve_s1) / (2 * eve_base * delta_y)
 effective_convexity = (eve_s2 + eve_s1 - 2*eve_base) / (eve_base * delta_y**2)
 
+# ========================================
+# INTERPRETATION: Duration and Convexity
+# ========================================
+# EFFECTIVE DURATION: Measures interest rate sensitivity
+#
+# Formula: Duration = (EVE_down - EVE_up) / (2 × EVE_base × Δy)
+# - EVE_down = EVE when rates fall (S2: -200bps)
+# - EVE_up = EVE when rates rise (S1: +200bps)
+# - Δy = rate change magnitude (0.02 = 200bps)
+#
+# RESULT: Duration = 0.0785 years (about 29 days!)
+#
+# WHAT THIS MEANS:
+# → VERY SHORT duration - deposits reprice in ~1 month
+# → For 1% rate increase, EVE changes by ~0.08%
+# → This confirms most deposits are in O/N and 1M buckets
+# → Short duration = Asset-sensitive = Rising rates hurt EVE
+#
+# COMPARE TO TYPICAL BANKS:
+# - Mortgage bank: Duration 3-7 years (long)
+# - Commercial bank: Duration 0.5-2 years (medium)
+# - Our bank: Duration 0.08 years (very short!)
+#
+# EFFECTIVE CONVEXITY: Measures curvature of price/rate relationship
+#
+# Formula: Convexity = (EVE_down + EVE_up - 2×EVE_base) / (EVE_base × Δy²)
+#
+# RESULT: Convexity = 0.0994 (positive)
+#
+# WHAT THIS MEANS:
+# → Positive convexity = beneficial price behavior
+# → As rates change, losses are smaller than duration predicts
+# → As rates change, gains are larger than duration predicts
+# → This is GOOD - provides a cushion under stress
+#
+# REAL-WORLD ANALOGY:
+# Duration = speed (how fast value changes)
+# Convexity = acceleration (how speed itself changes)
+# Positive convexity = having shock absorbers on your car!
+# ========================================
 print("\n" + "="*80)
 print("DURATION AND CONVEXITY ANALYSIS")
 print("="*80)
@@ -604,7 +860,42 @@ print("PHASE 3 COMPLETE")
 print("="*80)
 
 # %%
-# Save results
+# ========================================
+# OUTPUT FILES EXPLANATION
+# ========================================
+# We save 4 CSV files for further analysis and reporting:
+#
+# 1. eve_sensitivity_summary.csv
+#    Columns: Scenario, EVE, ΔEVE, ΔEVE_%
+#    - Main summary table with EVE under all 5 scenarios (base + 4 shocks)
+#    - Use this for: Regulatory reporting, executive summary
+#
+# 2. repricing_profile_with_eve.csv (21 columns!)
+#    Columns include:
+#    - Bucket: Time bucket name (O/N, 1M, 2M, ..., 5Y)
+#    - Start_Days, End_Days: Bucket boundaries in days
+#    - Midpoint_Years: Bucket midpoint for discounting
+#    - S(t_start), S(t_end): Survival probabilities at bucket boundaries
+#    - Marginal_Decay: S(t_start) - S(t_end) (deposit decay in this bucket)
+#    - Core_CF, Non_Core_CF, Total_CF: Cash flows by type
+#    - CF_Percent: % of total cash flow in this bucket
+#    - DF_Base, DF_S1, DF_S2, DF_S3, DF_S4: Discount factors (base + 4 scenarios)
+#    - PV_Base, PV_S1, PV_S2, PV_S3, PV_S4: Present values (base + 4 scenarios)
+#    - Use this for: Detailed bucket-level analysis, identifying concentration risk
+#
+# 3. shocked_yield_curves.csv
+#    Columns: Tenor, Tenor_Years, Base, S1_+200_Parallel, S2_-200_Parallel, S3_Steepener, S4_Flattener
+#    - Zero rates (in basis points) for base and all 4 shocked scenarios
+#    - Use this for: Visualizing rate shocks, validating shock functions
+#
+# 4. eve_key_metrics.csv
+#    Columns: Metric, Value
+#    Metrics: Base_EVE, Worst_Case_Scenario, Worst_Case_ΔEVE, Worst_Case_ΔEVE_%,
+#             Effective_Duration, Effective_Convexity
+#    - Single-row summary of key risk metrics
+#    - Use this for: Quick reference, dashboard metrics, KPI tracking
+#
+# ========================================
 eve_summary.to_csv('eve_sensitivity_summary.csv', index=False)
 
 # Save detailed bucket-level results

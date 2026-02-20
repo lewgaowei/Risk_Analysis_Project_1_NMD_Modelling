@@ -1,0 +1,20 @@
+{
+  "calculation_date": "2023-12-30",
+  "current_balance": 18651.70481694874,
+  "core_amount": 15586.373727163198,
+  "core_ratio_pct": 83.56541066959153,
+  "non_core_amount": 3065.331089785541,
+  "non_core_ratio_pct": 16.43458933040848,
+  "method": "Detrended Regression",
+  "phase_1b_survival_model": {
+    "model": "Kaplan-Meier",
+    "parameters": {
+      "method": "Non-parametric empirical estimator",
+      "description": "Cumulative minimum / current balance",
+      "conservative": true
+    },
+    "survival_1Y": 0.7330757674140038,
+    "survival_5Y": 0.46528770309742984,
+    "interpretation": "Conservative non-parametric estimate - worst case scenario"
+  }
+}

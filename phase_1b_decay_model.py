@@ -5,10 +5,25 @@
 #
 # **Calculation Date:** 30-Dec-2023
 #
+# **WHAT ARE WE DOING HERE?**
+# We're answering the question: "How long will deposits stay with the bank?"
+#
+# **WHY?**
+# NMDs (savings accounts) have no fixed maturity, so we need to estimate when
+# customers will withdraw. This "decay rate" tells us the probability of withdrawal.
+#
+# **THE SURVIVAL FUNCTION S(t):**
+# S(t) = Probability that $1 deposited today is still in the account at time t
+# Example: S(365 days) = 0.85 means 85% of deposits survive 1 year
+#
+# **KEY CONCEPT:**
+# λ (lambda) = daily decay rate = Outflow / Balance
+# S(t) = (1 - λ)^t  (like radioactive decay!)
+#
 # This notebook performs:
 # - Estimate conditional decay rate (CDR) from historical data
 # - Build exponential survival function S(t)
-# - Apply 5-year regulatory cap
+# - Apply 5-year regulatory cap (Basel rule)
 # - Generate survival probabilities at key tenors
 # - Visualize decay curves
 
@@ -50,13 +65,19 @@ print(f"\nData columns: {nmd_data.columns.tolist()}")
 # ### 2.1 Calculate Mean Daily Decay Rate
 
 # %%
-# Daily decay rate = Outflow / Balance
+# ========================================
+# CONCEPT: Daily Conditional Decay Rate
+# ========================================
+# Daily decay rate (λ) = Outflow / Balance
+# This is the CONDITIONAL probability that a deposit leaves on any given day.
+#
+# Example: If λ = 0.15%, then each day there's a 0.15% chance of withdrawal
 # Already computed in Phase 1a as 'daily_decay_rate'
 
-# Basic statistics on daily decay rate
-mean_daily_decay = nmd_data['daily_decay_rate'].mean()
-median_daily_decay = nmd_data['daily_decay_rate'].median()
-std_daily_decay = nmd_data['daily_decay_rate'].std()
+# Calculate summary statistics on daily decay rate
+mean_daily_decay = nmd_data['daily_decay_rate'].mean()      # Average decay per day
+median_daily_decay = nmd_data['daily_decay_rate'].median()  # Middle value (robust to outliers)
+std_daily_decay = nmd_data['daily_decay_rate'].std()        # Volatility of decay rate
 
 print("="*80)
 print("DAILY DECAY RATE STATISTICS")
@@ -68,10 +89,21 @@ print(f"Min Daily Decay Rate:                {nmd_data['daily_decay_rate'].min()
 print(f"Max Daily Decay Rate:                {nmd_data['daily_decay_rate'].max():.6f}  ({nmd_data['daily_decay_rate'].max()*100:.4f}%)")
 
 # %%
-# Convert to monthly decay rate
-# lambda_monthly = 1 - (1 - lambda_daily)^30
+# ========================================
+# CONCEPT: Converting Daily to Monthly Decay
+# ========================================
+# Why compound? Because each day, a portion of deposits leaves.
+#
+# Formula: lambda_monthly = 1 - (1 - lambda_daily)^30
+#
+# Intuition: If 0.15% leaves each day, after 30 days:
+# Remaining = (1 - 0.0015)^30 = 0.956 = 95.6%
+# So monthly decay = 1 - 0.956 = 4.4%
+#
+# This is compound decay, like compound interest in reverse!
+
 lambda_daily = mean_daily_decay
-lambda_monthly = 1 - (1 - lambda_daily)**30
+lambda_monthly = 1 - (1 - lambda_daily)**30  # Compound 30 days of daily decay
 
 print("\n" + "="*80)
 print("MONTHLY DECAY RATE CONVERSION")
@@ -535,6 +567,249 @@ ax.grid(True, alpha=0.3, axis='x')
 plt.tight_layout()
 plt.show()
 
+# %% [markdown]
+# ### 5.4 NEW: More Interpretable Charts for OLS
+
+# %%
+# ========================================
+# CHART 1: Residual Plot (Check Model Assumptions)
+# ========================================
+# Purpose: See if errors are random (good) or patterned (bad)
+# Residuals = Actual - Predicted
+
+print("\n" + "="*80)
+print("ADDITIONAL OLS DIAGNOSTIC CHARTS")
+print("="*80)
+
+residuals = ols_model.resid
+fitted = ols_model.fittedvalues
+
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+# Top-left: Residuals vs Fitted
+axes[0, 0].scatter(fitted, residuals, alpha=0.3, s=10, color='#023047')
+axes[0, 0].axhline(y=0, color='red', linestyle='--', linewidth=2)
+axes[0, 0].set_xlabel('Fitted Values (Predicted Decay)', fontsize=10)
+axes[0, 0].set_ylabel('Residuals (Actual - Predicted)', fontsize=10)
+axes[0, 0].set_title('Residual Plot: Check for Patterns\n(Should look random around zero)',
+                     fontsize=11, fontweight='bold')
+axes[0, 0].grid(True, alpha=0.3)
+
+# Top-right: Q-Q Plot (Check if errors are normal)
+from scipy import stats
+stats.probplot(residuals, dist="norm", plot=axes[0, 1])
+axes[0, 1].set_title('Q-Q Plot: Check if Residuals are Normal\n(Should follow red line)',
+                     fontsize=11, fontweight='bold')
+axes[0, 1].grid(True, alpha=0.3)
+
+# Bottom-left: Histogram of residuals
+axes[1, 0].hist(residuals, bins=50, color='#2A9D8F', alpha=0.7, edgecolor='black')
+axes[1, 0].axvline(x=0, color='red', linestyle='--', linewidth=2, label='Zero')
+axes[1, 0].set_xlabel('Residuals', fontsize=10)
+axes[1, 0].set_ylabel('Frequency', fontsize=10)
+axes[1, 0].set_title('Distribution of Residuals\n(Should be centered at zero)',
+                     fontsize=11, fontweight='bold')
+axes[1, 0].legend(fontsize=9)
+axes[1, 0].grid(True, alpha=0.3, axis='y')
+
+# Bottom-right: Residuals over time
+axes[1, 1].scatter(reg_data.index, residuals, alpha=0.3, s=10, color='#E63946')
+axes[1, 1].axhline(y=0, color='black', linestyle='--', linewidth=1)
+axes[1, 1].set_xlabel('Time (Index)', fontsize=10)
+axes[1, 1].set_ylabel('Residuals', fontsize=10)
+axes[1, 1].set_title('Residuals Over Time\n(Check for time patterns)',
+                     fontsize=11, fontweight='bold')
+axes[1, 1].grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+print("✓ Residual diagnostic charts created")
+print("  → If residuals random around zero = Good model!")
+print("  → If residuals show patterns = Model missing something")
+
+# %%
+# ========================================
+# CHART 2: Actual vs Predicted Scatter Plot
+# ========================================
+# Purpose: See how well predictions match reality
+# Perfect predictions would lie on the diagonal line
+
+fig, ax = plt.subplots(figsize=(10, 8))
+
+actual = y
+predicted = fitted
+
+# Scatter plot
+ax.scatter(actual, predicted, alpha=0.4, s=20, color='#023047', label='Observations')
+
+# Perfect prediction line (45-degree)
+min_val = min(actual.min(), predicted.min())
+max_val = max(actual.max(), predicted.max())
+ax.plot([min_val, max_val], [min_val, max_val],
+        'r--', linewidth=2, label='Perfect Prediction (45° line)')
+
+# Add R² annotation
+ax.text(0.05, 0.95, f'R² = {ols_model.rsquared:.4f}',
+        transform=ax.transAxes, fontsize=12, fontweight='bold',
+        verticalalignment='top',
+        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+ax.set_xlabel('Actual Decay Rate', fontsize=12)
+ax.set_ylabel('Predicted Decay Rate', fontsize=12)
+ax.set_title('OLS Predictions: Actual vs Predicted Decay Rates\n(Closer to red line = Better predictions)',
+             fontsize=13, fontweight='bold')
+ax.legend(fontsize=10)
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+print("\n✓ Actual vs Predicted scatter plot created")
+print(f"  → R² = {ols_model.rsquared:.4f} means model explains {ols_model.rsquared*100:.1f}% of variation")
+
+# %%
+# ========================================
+# CHART 3: Prediction Error Over Time
+# ========================================
+# Purpose: See if errors are getting worse/better over time
+
+fig, axes = plt.subplots(2, 1, figsize=(14, 10))
+
+# Top: Actual vs Predicted over time
+axes[0].plot(reg_data.index, actual, linewidth=1, color='#023047',
+            label='Actual Decay Rate', alpha=0.7)
+axes[0].plot(reg_data.index, predicted, linewidth=1, color='#E63946',
+            label='OLS Predicted', alpha=0.7, linestyle='--')
+axes[0].fill_between(reg_data.index, actual, predicted, alpha=0.2, color='red')
+axes[0].set_ylabel('Daily Decay Rate', fontsize=11)
+axes[0].set_title('Time Series: Actual vs OLS Predicted Decay Rates',
+                 fontsize=12, fontweight='bold')
+axes[0].legend(fontsize=10, loc='upper right')
+axes[0].grid(True, alpha=0.3)
+
+# Bottom: Absolute prediction error over time
+abs_error = np.abs(residuals)
+axes[1].plot(reg_data.index, abs_error, linewidth=0.8, color='#E63946', alpha=0.6)
+axes[1].axhline(y=abs_error.mean(), color='blue', linestyle='--', linewidth=2,
+               label=f'Mean Abs Error: {abs_error.mean():.6f}')
+axes[1].fill_between(reg_data.index, 0, abs_error, alpha=0.3, color='red')
+axes[1].set_xlabel('Time (Index)', fontsize=11)
+axes[1].set_ylabel('Absolute Prediction Error', fontsize=11)
+axes[1].set_title('Prediction Error Over Time (Lower = Better)',
+                 fontsize=12, fontweight='bold')
+axes[1].legend(fontsize=10)
+axes[1].grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+print("\n✓ Time series prediction error chart created")
+print(f"  → Mean absolute error: {abs_error.mean():.6f}")
+print(f"  → Median absolute error: {abs_error.median():.6f}")
+
+# %%
+# ========================================
+# CHART 4: Feature Effects (Top 5 Features)
+# ========================================
+# Purpose: Show HOW each feature affects decay rate
+# This makes the model interpretable!
+
+# Get top 5 features by absolute coefficient size (excluding const)
+params_no_const = ols_model.params.drop('const')
+top_5_features = params_no_const.abs().nlargest(5).index
+
+fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+axes = axes.flatten()
+
+for idx, feature in enumerate(top_5_features):
+    ax = axes[idx]
+
+    # Get feature values and predicted decay
+    feature_vals = X[feature]
+
+    # Sort for cleaner plot
+    sort_idx = np.argsort(feature_vals)
+    x_sorted = feature_vals.iloc[sort_idx]
+    y_sorted = fitted.iloc[sort_idx]
+
+    # Plot relationship
+    ax.scatter(feature_vals, fitted, alpha=0.3, s=10, color='#023047')
+
+    # Add trend line (moving average)
+    if len(x_sorted) > 50:
+        window = len(x_sorted) // 20
+        y_smooth = pd.Series(y_sorted.values).rolling(window=window, center=True).mean()
+        ax.plot(x_sorted, y_smooth, color='#E63946', linewidth=3,
+               label=f'Trend (β={ols_model.params[feature]:.6f})')
+
+    ax.set_xlabel(feature, fontsize=10)
+    ax.set_ylabel('Predicted Decay Rate', fontsize=10)
+    ax.set_title(f'Effect of {feature}\n(p={ols_model.pvalues[feature]:.4f})',
+                fontsize=10, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=8)
+
+# Remove extra subplot
+axes[5].axis('off')
+
+plt.suptitle('Feature Effects: How Each Variable Affects Predicted Decay Rate',
+             fontsize=14, fontweight='bold', y=1.00)
+plt.tight_layout()
+plt.show()
+
+print("\n✓ Feature effects charts created (top 5 features)")
+print("  → Shows HOW each feature affects decay predictions")
+print("  → Upward slope = Higher feature value → Higher decay")
+print("  → Downward slope = Higher feature value → Lower decay")
+
+# %%
+# ========================================
+# CHART 5: Coefficient Interpretation Guide
+# ========================================
+# Purpose: Easy-to-read coefficient table with interpretations
+
+# Create interpretation table
+coef_df = pd.DataFrame({
+    'Feature': ols_model.params.index,
+    'Coefficient': ols_model.params.values,
+    'p_value': ols_model.pvalues.values,
+    'Significant': ['***' if p < 0.001 else '**' if p < 0.01 else '*' if p < 0.05 else ''
+                    for p in ols_model.pvalues.values]
+})
+
+# Add interpretation
+def interpret_coef(row):
+    if row['Feature'] == 'const':
+        return 'Baseline decay rate when all features = 0'
+    elif 'log_balance' in row['Feature']:
+        return '+1% balance → decay changes by {:.6f}'.format(row['Coefficient'] * 0.01)
+    elif 'trend' in row['Feature']:
+        return 'Each day, decay changes by {:.6f}'.format(row['Coefficient'])
+    elif 'rolling' in row['Feature']:
+        return 'If past decay +1%, today\'s decay +{:.2f}%'.format(row['Coefficient'] * 100)
+    elif 'dow' in row['Feature']:
+        day = row['Feature'].split('_')[1]
+        days = {1: 'Tue', 2: 'Wed', 3: 'Thu', 4: 'Fri', 5: 'Sat', 6: 'Sun'}
+        return f'{days.get(int(day), "Unknown")} vs Monday: {row["Coefficient"]:+.6f}'
+    elif 'month' in row['Feature']:
+        m = row['Feature'].split('_')[1]
+        months = {2:'Feb',3:'Mar',4:'Apr',5:'May',6:'Jun',7:'Jul',8:'Aug',9:'Sep',10:'Oct',11:'Nov',12:'Dec'}
+        return f'{months.get(int(m), "Unknown")} vs Jan: {row["Coefficient"]:+.6f}'
+    else:
+        return 'Custom feature effect'
+
+coef_df['Interpretation'] = coef_df.apply(interpret_coef, axis=1)
+
+# Show top 10 by significance
+top_significant = coef_df.nsmallest(10, 'p_value')
+
+print("\n" + "="*80)
+print("TOP 10 MOST SIGNIFICANT FEATURES (Interpretation Guide)")
+print("="*80)
+print("\nSignificance codes: *** p<0.001  ** p<0.01  * p<0.05")
+print("-"*80)
+print(top_significant[['Feature', 'Coefficient', 'p_value', 'Significant', 'Interpretation']].to_string(index=False))
+
 # Print interpretation
 print("="*80)
 print("FEATURE SIGNIFICANCE SUMMARY")
@@ -550,6 +825,231 @@ for feat in sig_features.index:
 print(f"\nNon-significant features (p >= 0.05): {len(nonsig_features)}")
 for feat in nonsig_features.index:
     print(f"    {feat}: coef={params[feat]:.6f}, p={pvalues[feat]:.4f}")
+
+# %% [markdown]
+# ## 5.5 Phase 1b.2: Stress Period Identification Using Predicted Decay Rates
+#
+# **NEW APPROACH:** Use OLS-predicted decay rates to identify stress periods
+#
+# **Why This Matters:**
+# - Not all days are equal - some have higher withdrawal risk
+# - Stress periods reveal when deposits behave like "non-core"
+# - Can be used in Phase 1c for more sophisticated core/non-core split
+#
+# **Method:**
+# 1. Use OLS predicted decay rates
+# 2. Define stress threshold (e.g., 90th percentile)
+# 3. Identify dates when decay > threshold
+# 4. These are "high-risk" periods for core estimation
+
+# %%
+print("\n" + "="*80)
+print("PHASE 1B.2: STRESS PERIOD IDENTIFICATION")
+print("="*80)
+
+# ========================================
+# CONCEPT: Decay-Based Stress Identification
+# ========================================
+# Instead of using balance minimums only, we identify WHEN deposits
+# behave in a "stressed" or "non-core" manner based on high decay rates.
+#
+# This captures behavioral patterns:
+# - High decay days → Hot money behavior
+# - Low decay days → Sticky deposit behavior
+#
+# We'll test multiple percentile thresholds to define "stress"
+
+# Get predicted decay rates from OLS model (already computed above)
+predicted_decay = fitted
+actual_decay = y
+
+# %%
+# Define stress thresholds at different percentiles
+percentiles = [75, 80, 85, 90, 95]
+stress_analysis = []
+
+print("\nSTRESS PERIOD ANALYSIS - MULTIPLE THRESHOLDS")
+print("="*80)
+
+for pct in percentiles:
+    # Calculate threshold
+    threshold = np.percentile(predicted_decay, pct)
+
+    # Identify stress periods
+    stress_mask = predicted_decay > threshold
+    n_stress_days = stress_mask.sum()
+    pct_stress_days = (n_stress_days / len(predicted_decay)) * 100
+
+    # Balance statistics during stress periods
+    balance_stress = nmd_data.loc[reg_data.index[stress_mask], 'Balance']
+    balance_normal = nmd_data.loc[reg_data.index[~stress_mask], 'Balance']
+
+    min_balance_stress = balance_stress.min() if len(balance_stress) > 0 else np.nan
+    min_balance_normal = balance_normal.min() if len(balance_normal) > 0 else np.nan
+    min_balance_overall = nmd_data['Balance'].min()
+
+    # Average decay in stress vs normal periods
+    avg_decay_stress = predicted_decay[stress_mask].mean() if stress_mask.sum() > 0 else np.nan
+    avg_decay_normal = predicted_decay[~stress_mask].mean() if (~stress_mask).sum() > 0 else np.nan
+
+    stress_analysis.append({
+        'Percentile': pct,
+        'Threshold': threshold,
+        'N_Stress_Days': n_stress_days,
+        'Pct_Stress_Days': pct_stress_days,
+        'Min_Balance_Stress': min_balance_stress,
+        'Min_Balance_Normal': min_balance_normal,
+        'Min_Balance_Overall': min_balance_overall,
+        'Avg_Decay_Stress': avg_decay_stress,
+        'Avg_Decay_Normal': avg_decay_normal,
+        'Decay_Ratio': avg_decay_stress / avg_decay_normal if avg_decay_normal > 0 else np.nan
+    })
+
+    print(f"\nP{pct} Threshold: {threshold:.6f} ({threshold*100:.4f}%)")
+    print(f"  Stress days:           {n_stress_days:>4} ({pct_stress_days:>5.2f}% of sample)")
+    print(f"  Min balance (stress):  ${min_balance_stress:>10,.2f}")
+    print(f"  Min balance (normal):  ${min_balance_normal:>10,.2f}")
+    print(f"  Min balance (overall): ${min_balance_overall:>10,.2f}")
+    print(f"  Avg decay (stress):    {avg_decay_stress:.6f} ({avg_decay_stress*100:.4f}%)")
+    print(f"  Avg decay (normal):    {avg_decay_normal:.6f} ({avg_decay_normal*100:.4f}%)")
+    print(f"  Stress/Normal ratio:   {avg_decay_stress/avg_decay_normal:.2f}x")
+
+stress_df = pd.DataFrame(stress_analysis)
+
+# %%
+# ========================================
+# INTERPRETATION: What Do These Numbers Mean?
+# ========================================
+print("\n" + "="*80)
+print("INTERPRETATION: STRESS PERIOD IDENTIFICATION")
+print("="*80)
+
+print("\nKEY FINDINGS:")
+print("-" * 80)
+
+# Find recommended percentile (90th is standard for stress testing)
+recommended_pct = 90
+rec_row = stress_df[stress_df['Percentile'] == recommended_pct].iloc[0]
+
+print(f"\n1. RECOMMENDED THRESHOLD: {recommended_pct}th Percentile")
+print(f"   → Decay threshold:     {rec_row['Threshold']:.6f} ({rec_row['Threshold']*100:.4f}%)")
+print(f"   → Stress days:         {rec_row['N_Stress_Days']:.0f} days ({rec_row['Pct_Stress_Days']:.1f}% of sample)")
+print(f"   → Min balance (stress): ${rec_row['Min_Balance_Stress']:,.2f}")
+print(f"   → Min balance (overall): ${rec_row['Min_Balance_Overall']:,.2f}")
+
+difference = rec_row['Min_Balance_Stress'] - rec_row['Min_Balance_Overall']
+pct_difference = (difference / rec_row['Min_Balance_Overall']) * 100
+
+if difference > 0:
+    print(f"\n2. STRESS-ADJUSTED CORE ESTIMATE")
+    print(f"   → Stress-based minimum is ${difference:,.2f} HIGHER (+{pct_difference:.1f}%)")
+    print(f"   → This means: Even during high-decay periods, balance stayed above overall minimum")
+    print(f"   → Interpretation: The historical minimum was during a TRUE crisis")
+    print(f"   → Conclusion: Historical minimum method is appropriately conservative")
+else:
+    print(f"\n2. STRESS-ADJUSTED CORE ESTIMATE")
+    print(f"   → Stress-based minimum is ${abs(difference):,.2f} LOWER ({pct_difference:.1f}%)")
+    print(f"   → This means: Historical minimum occurred during normal, not high-decay period")
+    print(f"   → Interpretation: Could use stress-based minimum as more behavioral core estimate")
+
+print(f"\n3. DECAY BEHAVIOR IN STRESS vs NORMAL PERIODS")
+print(f"   → Stress periods decay:  {rec_row['Avg_Decay_Stress']*100:.4f}% per day")
+print(f"   → Normal periods decay:  {rec_row['Avg_Decay_Normal']*100:.4f}% per day")
+print(f"   → Stress/Normal ratio:   {rec_row['Decay_Ratio']:.2f}x")
+print(f"   → Interpretation: Decay is {(rec_row['Decay_Ratio']-1)*100:.0f}% higher during stress")
+
+print("\n4. USAGE IN PHASE 1C (Core/Non-Core Split)")
+print(f"   → Method A (Current): Use overall minimum = ${rec_row['Min_Balance_Overall']:,.2f}")
+print(f"   → Method B (New):     Use stress minimum  = ${rec_row['Min_Balance_Stress']:,.2f}")
+print(f"   → Method C (Hybrid):  Use min(A, B) for maximum conservatism")
+print(f"   → The stress period approach identifies WHEN deposits behave non-core")
+print(f"   → This is more forward-looking than pure historical balance minimum")
+
+# %%
+# Visualize stress periods
+print("\n" + "="*80)
+print("STRESS PERIOD VISUALIZATIONS")
+print("="*80)
+
+# Use 90th percentile for visualization
+stress_threshold_90 = np.percentile(predicted_decay, 90)
+stress_mask_90 = predicted_decay > stress_threshold_90
+
+# ========================================
+# CHART: Predicted Decay Rate with Stress Periods Highlighted
+# ========================================
+fig, axes = plt.subplots(3, 1, figsize=(16, 12))
+
+# Top panel: Predicted decay rate with stress threshold
+axes[0].plot(reg_data.index, predicted_decay, linewidth=0.8, color='#023047',
+            label='OLS Predicted Decay Rate', alpha=0.7)
+axes[0].axhline(y=stress_threshold_90, color='red', linestyle='--', linewidth=2,
+               label=f'Stress Threshold (P90 = {stress_threshold_90:.6f})', alpha=0.8)
+axes[0].fill_between(reg_data.index, predicted_decay, stress_threshold_90,
+                     where=stress_mask_90, alpha=0.3, color='red',
+                     label='Stress Periods')
+axes[0].set_ylabel('Daily Decay Rate', fontsize=11)
+axes[0].set_title('Predicted Decay Rate with Stress Period Identification (P90 Threshold)',
+                 fontsize=13, fontweight='bold')
+axes[0].legend(fontsize=10, loc='upper right')
+axes[0].grid(True, alpha=0.3)
+
+# Middle panel: Balance during stress vs normal periods
+balance_series = nmd_data.loc[reg_data.index, 'Balance']
+axes[1].plot(reg_data.index, balance_series, linewidth=1, color='#2A9D8F',
+            label='Balance', alpha=0.7)
+axes[1].scatter(reg_data.index[stress_mask_90], balance_series[stress_mask_90],
+               color='red', s=5, alpha=0.6, label='Stress Periods', zorder=5)
+axes[1].axhline(y=rec_row['Min_Balance_Overall'], color='blue', linestyle='--',
+               linewidth=2, label=f'Overall Min: ${rec_row["Min_Balance_Overall"]:,.0f}')
+axes[1].axhline(y=rec_row['Min_Balance_Stress'], color='red', linestyle='--',
+               linewidth=2, label=f'Stress Min: ${rec_row["Min_Balance_Stress"]:,.0f}')
+axes[1].set_ylabel('Balance ($)', fontsize=11)
+axes[1].set_title('Balance Time Series: Stress vs Normal Periods',
+                 fontsize=13, fontweight='bold')
+axes[1].legend(fontsize=10, loc='best')
+axes[1].grid(True, alpha=0.3)
+
+# Bottom panel: Distribution comparison
+axes[2].hist(predicted_decay[~stress_mask_90], bins=50, alpha=0.6, color='#2A9D8F',
+            edgecolor='black', label=f'Normal Periods (n={(~stress_mask_90).sum()})')
+axes[2].hist(predicted_decay[stress_mask_90], bins=50, alpha=0.6, color='#E63946',
+            edgecolor='black', label=f'Stress Periods (n={stress_mask_90.sum()})')
+axes[2].axvline(x=stress_threshold_90, color='red', linestyle='--', linewidth=2,
+               label=f'P90 Threshold: {stress_threshold_90:.6f}')
+axes[2].set_xlabel('Predicted Decay Rate', fontsize=11)
+axes[2].set_ylabel('Frequency', fontsize=11)
+axes[2].set_title('Distribution: Normal vs Stress Period Decay Rates',
+                 fontsize=13, fontweight='bold')
+axes[2].legend(fontsize=10)
+axes[2].grid(True, alpha=0.3, axis='y')
+
+plt.tight_layout()
+plt.show()
+
+print("\n✓ Stress period visualization created")
+print("  → Red areas show high-decay (stress) periods")
+print("  → These periods identify when deposits behave like 'hot money'")
+
+# %%
+# Save stress analysis results
+stress_df.to_csv('stress_period_analysis.csv', index=False)
+
+# Save stress period flags for Phase 1c
+stress_periods_output = pd.DataFrame({
+    'Date': nmd_data.loc[reg_data.index, 'Date'].values,
+    'Balance': balance_series.values,
+    'Predicted_Decay': predicted_decay,
+    'Stress_P90': stress_mask_90,
+    'Stress_P95': predicted_decay > np.percentile(predicted_decay, 95),
+    'Stress_P85': predicted_decay > np.percentile(predicted_decay, 85)
+})
+stress_periods_output.to_csv('stress_periods_identified.csv', index=False)
+
+print("\nAdditional data saved:")
+print("- stress_period_analysis.csv (summary by percentile)")
+print("- stress_periods_identified.csv (daily stress flags)")
+print("\n→ These files can be used in Phase 1c for decay-based core estimation")
 
 # %% [markdown]
 # ## 6. Summary and Export Results
