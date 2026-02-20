@@ -84,6 +84,12 @@ def calculate_cashflow_allocation(survival_curve, core_amt, non_core_amt, bucket
         if bucket_name == 'O/N':
             core_cf = core_amt * (s_start - s_end)
             total_cf = non_core_amt + core_cf
+        elif bucket_name == '5Y':
+            # 5Y bucket gets marginal decay + residual beyond 5Y (Basel cap)
+            marginal_decay = core_amt * (s_start - s_end)
+            residual_beyond_5y = core_amt * s_end  # S(1825) remainder
+            core_cf = marginal_decay + residual_beyond_5y
+            total_cf = core_cf
         else:
             core_cf = core_amt * (s_start - s_end)
             total_cf = core_cf

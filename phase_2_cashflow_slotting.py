@@ -178,8 +178,14 @@ for idx, row in buckets_df.iterrows():
         # O/N bucket gets all non-core + marginal core decay from day 0 to 1
         core_cf = core_amount * (s_start - s_end)
         total_cf = non_core_amount + core_cf
+    elif bucket_name == '5Y':
+        # 5Y bucket gets marginal decay (4Y-5Y) + residual beyond 5Y (Basel cap)
+        marginal_decay = core_amount * (s_start - s_end)
+        residual_beyond_5y = core_amount * s_end  # S(1825) remainder - everything surviving beyond 5Y
+        core_cf = marginal_decay + residual_beyond_5y
+        total_cf = core_cf
     else:
-        # Other buckets get marginal core decay
+        # Other buckets get marginal core decay only
         core_cf = core_amount * (s_start - s_end)
         total_cf = core_cf
 
@@ -204,6 +210,8 @@ repricing_profile['CF_Percent'] = (repricing_profile['Total_CF'] / current_balan
 
 # Verify total matches current balance
 total_cf = repricing_profile['Total_CF'].sum()
+total_core_cf = repricing_profile['Core_CF'].sum()
+
 print("\n" + "="*80)
 print("CASH FLOW SLOTTING RESULTS")
 print("="*80)
@@ -211,6 +219,25 @@ print(f"Total Cash Flows:        {total_cf:,.2f}")
 print(f"Current Balance:         {current_balance:,.2f}")
 print(f"Difference:              {abs(total_cf - current_balance):,.6f}")
 print(f"Match: {'✓ PASS' if abs(total_cf - current_balance) < 0.01 else '✗ FAIL'}")
+
+print(f"\nCore Allocation Check:")
+print(f"Total Core CF:           {total_core_cf:,.2f}")
+print(f"Expected Core:           {core_amount:,.2f}")
+print(f"Difference:              {abs(total_core_cf - core_amount):,.6f}")
+print(f"Match: {'✓ PASS' if abs(total_core_cf - core_amount) < 0.01 else '✗ FAIL'}")
+
+# Show 5Y bucket breakdown
+five_y_row = repricing_profile[repricing_profile['Bucket'] == '5Y'].iloc[0]
+s_5y = five_y_row['S(t_end)']
+marginal_5y = core_amount * five_y_row['Marginal_Decay']
+residual_5y = core_amount * s_5y
+
+print(f"\n5Y Bucket Breakdown (Basel 5Y Cap):")
+print(f"  Marginal decay (4Y-5Y):   {marginal_5y:,.2f}  ({marginal_5y/core_amount*100:.2f}% of core)")
+print(f"  Residual (beyond 5Y):     {residual_5y:,.2f}  ({residual_5y/core_amount*100:.2f}% of core)")
+print(f"  Total 5Y allocation:      {five_y_row['Core_CF']:,.2f}  ({five_y_row['CF_Percent']:.2f}% of balance)")
+print(f"\n  → S(5Y) = {s_5y*100:.2f}% of deposits survive beyond 5 years")
+print(f"  → Per Basel, these are capped at 5Y maturity")
 
 # %% [markdown]
 # ### 4.2 Repricing Profile Table
