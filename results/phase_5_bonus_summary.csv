@@ -1,0 +1,11 @@
+Section,Analysis,Result_1,Result_2
+5a,Core Ratio Sensitivity,5 ratios tested,Primary: 50.99%
+5b,Pass-Through Analysis,6 beta values tested,NII impact linear in beta
+5c,Backtest - Pure Decay,RMSE=16188.50,MAPE=85.29%
+5c,Backtest - Monthly Reanchored,RMSE=4735.11,MAPE=22.09%
+5d,Monte Carlo VaR dEVE (95%),-0.04,ES=-0.04
+5d,Monte Carlo VaR dNII (95%),-0.43,ES=-0.45
+5d,MC Year-1 Balance (Median),19.98,"Range: [16.93, 23.52]"
+5e,Stress 1.0x Base,Worst dEVE=-28.84,Worst dNII=-342.71
+5e,Stress 1.5x,Worst dEVE=-19.76,Worst dNII=-352.28
+5e,Stress 2.0x,Worst dEVE=-15.27,Worst dNII=-357.03

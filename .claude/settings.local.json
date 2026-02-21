@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 phase_1c_regression_core_estimation.py)",
+      "Bash(python3 phase_1b_advanced_survival_models.py)",
+      "Bash(python3 -c \"\nimport pandas as pd\n\n# Load Kaplan-Meier survival curve\nsurvival_full = pd.read_csv(''survival_curve_full_advanced.csv'')\n\nprint(''S(t) at key points:'')\nprint(f''S(1Y = 365d):   {survival_full.iloc[365][\"\"S(t)\"\"]:.4f}  ({survival_full.iloc[365][\"\"S(t)\"\"]*100:.2f}%)'')\nprint(f''S(2Y = 730d):   {survival_full.iloc[730][\"\"S(t)\"\"]:.4f}  ({survival_full.iloc[730][\"\"S(t)\"\"]*100:.2f}%)'')\nprint(f''S(3Y = 1095d):  {survival_full.iloc[1095][\"\"S(t)\"\"]:.4f}  ({survival_full.iloc[1095][\"\"S(t)\"\"]*100:.2f}%)'')\nprint(f''S(4Y = 1460d):  {survival_full.iloc[1460][\"\"S(t)\"\"]:.4f}  ({survival_full.iloc[1460][\"\"S(t)\"\"]*100:.2f}%)'')\nprint(f''S(5Y = 1825d):  {survival_full.iloc[1825][\"\"S(t)\"\"]:.4f}  ({survival_full.iloc[1825][\"\"S(t)\"\"]*100:.2f}%)'')\n\nprint(''\\nMarginal decay (bucket allocations):'')\nprint(f''1Y bucket (9M-1Y): {(survival_full.iloc[270][\"\"S(t)\"\"] - survival_full.iloc[365][\"\"S(t)\"\"])*100:.2f}%'')\nprint(f''2Y bucket (1Y-2Y): {(survival_full.iloc[365][\"\"S(t)\"\"] - survival_full.iloc[730][\"\"S(t)\"\"])*100:.2f}%'')\nprint(f''3Y bucket (2Y-3Y): {(survival_full.iloc[730][\"\"S(t)\"\"] - survival_full.iloc[1095][\"\"S(t)\"\"])*100:.2f}%'')\nprint(f''4Y bucket (3Y-4Y): {(survival_full.iloc[1095][\"\"S(t)\"\"] - survival_full.iloc[1460][\"\"S(t)\"\"])*100:.2f}%'')\nprint(f''5Y bucket (4Y-5Y): {(survival_full.iloc[1460][\"\"S(t)\"\"] - survival_full.iloc[1825][\"\"S(t)\"\"])*100:.2f}%'')\n\")",
+      "WebFetch(domain:kth.diva-portal.org)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
