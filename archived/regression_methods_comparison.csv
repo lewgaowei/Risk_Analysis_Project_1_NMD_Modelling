@@ -1,0 +1,5 @@
+Method,Description,Core_Amount,Core_Ratio_%,Non_Core_Amount
+1. Mean Reversion (Vasicek),Long-run mean from ΔB regression,18365.875462110853,98.46754300669527,285.82935483788606
+2. Detrended Regression,Current + Min(Residual from trend),15586.373727163209,83.56541066959159,3065.33108978553
+3. Quantile Regression (10th),10th percentile on time,18433.415758985648,98.8296562694648,218.28905796309118
+4. Exponential Growth,Floor from growth model,11372.113760875232,60.97090787401606,7279.5910560735065
