@@ -382,7 +382,7 @@ print(f"\nSimulating {n_paths} paths...")
 balance_paths = np.zeros((n_paths, n_days_sim + 1))
 balance_paths[:, 0] = calc_balance
 
-n_days_rate = 365  # simulate rates for 1Y (evaluation horizon for EVE/NII)
+n_days_rate = 365 * 5  # simulate rates for 5Y (multi-year EVE/NII evaluation)
 rate_paths = np.zeros((n_paths, n_days_rate + 1))
 rate_paths[:, 0] = r0
 
@@ -396,7 +396,7 @@ for path in range(n_paths):
         net_rate_t = mu_net + eps_net[t]
         balance_paths[path, t + 1] = max(balance_paths[path, t] * (1 + net_rate_t), 0)
 
-    # Rate path: 1 year (Vasicek)
+    # Rate path: 5 years (Vasicek)
     for t in range(n_days_rate):
         r_t = rate_paths[path, t]
         dr = kappa_v * (theta_v - r_t) * dt_v + sigma_r * np.sqrt(dt_v) * eps_rate[t]
@@ -422,14 +422,13 @@ print(f"  5th percentile:   {bal_pct_5[-1]:>12,.2f}")
 print(f"  Median:           {bal_pct_50[-1]:>12,.2f}")
 print(f"  95th percentile:  {bal_pct_95[-1]:>12,.2f}")
 
-# Rate distribution at Year 1
-rate_y1 = rate_paths[:, -1]
-print(f"\nShort Rate Distribution at Year 1:")
-print(f"  5th percentile:   {np.percentile(rate_y1, 5):.3%}")
-print(f"  Median:           {np.median(rate_y1):.3%}")
-print(f"  95th percentile:  {np.percentile(rate_y1, 95):.3%}")
-print(f"  Mean:             {np.mean(rate_y1):.3%}")
-print(f"  Std:              {np.std(rate_y1):.3%}")
+# Rate distribution per year
+print(f"\nShort Rate Distribution:")
+print(f"  {'Year':>4}  {'5th pctl':>10}  {'Median':>10}  {'95th pctl':>10}  {'Mean':>10}  {'Std':>10}")
+for yr in range(1, 6):
+    r_yr = rate_paths[:, yr * 365]
+    print(f"  {yr:>4}  {np.percentile(r_yr, 5):>10.3%}  {np.median(r_yr):>10.3%}  "
+          f"{np.percentile(r_yr, 95):>10.3%}  {np.mean(r_yr):>10.3%}  {np.std(r_yr):>10.3%}")
 
 print(f"\nSimulation complete.")
 
@@ -458,7 +457,7 @@ ax1.set_title(f'Monte Carlo Balance Paths ({n_paths} paths)')
 ax1.legend(loc='upper left', fontsize=9)
 ax1.set_xlim(0, 5)
 
-# --- Chart 2: Interest rate paths (1Y) ---
+# --- Chart 2: Interest rate paths (5Y) ---
 ax2 = axes[1]
 days_rate = np.arange(n_days_rate + 1)
 years_rate = days_rate / 365
@@ -481,9 +480,9 @@ ax2.axhline(y=r0 * 100, color='red', linestyle='--', linewidth=1, label=f'Initia
 
 ax2.set_xlabel('Years')
 ax2.set_ylabel('Short Rate (%)')
-ax2.set_title(f'Vasicek Short Rate Paths ({n_paths} paths)')
+ax2.set_title(f'Vasicek Short Rate Paths ({n_paths} paths, 5Y)')
 ax2.legend(loc='upper right', fontsize=9)
-ax2.set_xlim(0, 1)
+ax2.set_xlim(0, 5)
 
 plt.tight_layout()
 plt.savefig('mc_section5_paths.png', dpi=150, bbox_inches='tight')
@@ -491,195 +490,264 @@ plt.show()
 print("Saved: mc_section5_paths.png")
 
 # %% [markdown]
-# ## Section 6: EVE/NII per MC Path & Risk Metrics
+# ## Section 6: Multi-Year EVE/NII per MC Path & Risk Metrics
 #
-# For each of the 1,000 paths at Year 1:
-# 1. Take simulated balance and short rate
-# 2. Perturb core ratio (stochastic uncertainty around Phase 1c estimate)
+# For each of the 1,000 paths at Years 1, 2, 3, 4, 5:
+# 1. Take simulated balance and short rate at that year
+# 2. Perturb core ratio (one draw per path, persistent across years)
 # 3. Slot into 11 buckets using Portfolio KM survival curve
 # 4. Shift actual yield curve by simulated rate change (parallel shift)
 # 5. Compute EVE and NII under the path's curve AND under 4 shock scenarios
 # 6. dEVE = EVE(path) - EVE(static base), dNII = NII(path) - NII(static base)
 #
-# Risk metrics: VaR (5th percentile of losses) and ES (mean beyond VaR) at 95%
+# Risk metrics: VaR and ES at 95% confidence, computed per evaluation year
 
 # %%
-print(f"\n{'='*70}")
-print(f"SECTION 6: EVE/NII PER MC PATH & RISK METRICS")
-print(f"{'='*70}")
-print(f"Processing {n_paths} paths...")
+eval_years = [1, 2, 3, 4, 5]
 
-# Storage for per-path results
+print(f"\n{'='*70}")
+print(f"SECTION 6: MULTI-YEAR EVE/NII PER MC PATH & RISK METRICS")
+print(f"{'='*70}")
+print(f"Processing {n_paths} paths x {len(eval_years)} years...")
+
+# Storage for per-path, per-year results
 mc_results = []
 
 for i in range(n_paths):
-    # 1. Year-1 balance from simulated path
-    bal_y1 = balance_paths[i, 365]
-
-    # 2. Year-1 short rate from Vasicek path
-    r_y1 = rate_paths[i, -1]
-    rate_shift = r_y1 - r0  # change in short rate vs initial
-
-    # 3. Perturb core ratio (clip to [0.5, 0.99] to keep realistic)
+    # Core ratio perturbation: ONE per path (structural estimate uncertainty)
     core_ratio_i = np.clip(core_pct + np.random.normal(0, sigma_core), 0.50, 0.99)
 
-    # 4. Slot into 11 buckets using this path's balance + core ratio
-    alloc_i, midpts_i = slot_cashflows(bal_y1, core_ratio_i, survival_interp)
+    for yr in eval_years:
+        day = yr * 365
 
-    # 5. Build this path's yield curve: base curve + parallel shift from Vasicek
-    curve_i = np.maximum(base_curve + rate_shift, 0)
+        # 1. Balance and short rate at this year
+        bal = balance_paths[i, day]
+        r = rate_paths[i, day]
+        rate_shift = r - r0
 
-    # 6. Compute EVE and NII under this path's curve (no additional shock)
-    eve_i = compute_eve(alloc_i, midpts_i, curve_i, tenor_years)
-    nii_i = compute_nii(alloc_i, midpts_i, curve_i, tenor_years)
+        # 2. Slot into 11 buckets
+        alloc_i, midpts_i = slot_cashflows(bal, core_ratio_i, survival_interp)
 
-    # 7. Compute EVE/NII under 4 shock scenarios applied ON TOP of path's curve
-    path_row = {
-        'path': i,
-        'balance_y1': bal_y1,
-        'rate_y1': r_y1,
-        'rate_shift': rate_shift,
-        'core_ratio': core_ratio_i,
-        'eve_path': eve_i,
-        'nii_path': nii_i,
-        'dEVE_path': eve_i - eve_base,
-        'dNII_path': nii_i - nii_base,
-    }
+        # 3. Build this path's yield curve: base + parallel shift from Vasicek
+        curve_i = np.maximum(base_curve + rate_shift, 0)
 
-    # Apply each shock scenario on top of the path's curve
-    for sname, shock_curve in scenarios.items():
-        if sname == 'Base':
-            continue
-        # Shock applied to the PATH's curve (not the static base)
-        shocked_i = np.maximum(curve_i + (shock_curve - base_curve), 0)
-        eve_s = compute_eve(alloc_i, midpts_i, shocked_i, tenor_years)
-        nii_s = compute_nii(alloc_i, midpts_i, shocked_i, tenor_years)
-        skey = sname.replace(' ', '_').replace('+', 'up').replace('-', 'dn')
-        path_row[f'eve_{skey}'] = eve_s
-        path_row[f'nii_{skey}'] = nii_s
-        path_row[f'dEVE_{skey}'] = eve_s - eve_base
-        path_row[f'dNII_{skey}'] = nii_s - nii_base
+        # 4. Compute EVE and NII under this path's curve
+        eve_i = compute_eve(alloc_i, midpts_i, curve_i, tenor_years)
+        nii_i = compute_nii(alloc_i, midpts_i, curve_i, tenor_years)
 
-    mc_results.append(path_row)
+        path_row = {
+            'path': i,
+            'year': yr,
+            'balance': bal,
+            'rate': r,
+            'rate_shift': rate_shift,
+            'core_ratio': core_ratio_i,
+            'eve_path': eve_i,
+            'nii_path': nii_i,
+            'dEVE_path': eve_i - eve_base,
+            'dNII_path': nii_i - nii_base,
+        }
+
+        # 5. Apply each shock scenario on top of the path's curve
+        for sname, shock_curve in scenarios.items():
+            if sname == 'Base':
+                continue
+            shocked_i = np.maximum(curve_i + (shock_curve - base_curve), 0)
+            eve_s = compute_eve(alloc_i, midpts_i, shocked_i, tenor_years)
+            nii_s = compute_nii(alloc_i, midpts_i, shocked_i, tenor_years)
+            skey = sname.replace(' ', '_').replace('+', 'up').replace('-', 'dn')
+            path_row[f'eve_{skey}'] = eve_s
+            path_row[f'nii_{skey}'] = nii_s
+            path_row[f'dEVE_{skey}'] = eve_s - eve_base
+            path_row[f'dNII_{skey}'] = nii_s - nii_base
+
+        mc_results.append(path_row)
 
 mc_df = pd.DataFrame(mc_results)
-print(f"Done. {len(mc_df)} paths processed.")
+print(f"Done. {len(mc_df)} records ({n_paths} paths x {len(eval_years)} years).")
 
 # %%
-# === Risk Metrics: VaR and ES at 95% confidence ===
-
-print(f"\n{'='*70}")
-print(f"RISK METRICS (95% Confidence Level)")
-print(f"{'='*70}")
-
-# dEVE from path's own curve (balance + rate risk combined)
-dEVE_path = mc_df['dEVE_path'].values
-dNII_path = mc_df['dNII_path'].values
+# === Risk Metrics: VaR and ES at 95% confidence, per year ===
 
 def compute_var_es(losses, confidence=0.95):
     """VaR = percentile of losses, ES = mean of losses beyond VaR."""
-    # For losses: negative dEVE/dNII means loss
     var = np.percentile(losses, (1 - confidence) * 100)
     es = losses[losses <= var].mean() if (losses <= var).any() else var
     return var, es
 
-print(f"\n  --- Path Risk (Balance + Rate combined, no additional shock) ---")
-var_eve, es_eve = compute_var_es(dEVE_path)
-var_nii, es_nii = compute_var_es(dNII_path)
-print(f"  dEVE:  Mean={np.mean(dEVE_path):>10,.2f}  Std={np.std(dEVE_path):>10,.2f}")
-print(f"         VaR(95%)={var_eve:>10,.2f}  ES(95%)={es_eve:>10,.2f}")
-print(f"  dNII:  Mean={np.mean(dNII_path):>10,.2f}  Std={np.std(dNII_path):>10,.2f}")
-print(f"         VaR(95%)={var_nii:>10,.2f}  ES(95%)={es_nii:>10,.2f}")
-
-# Worst-case shock across all scenarios per path
-print(f"\n  --- Worst-Case Shock per Path ---")
+# Add worst-case columns
 shock_keys = [c for c in mc_df.columns if c.startswith('dEVE_') and c != 'dEVE_path']
 nii_shock_keys = [c for c in mc_df.columns if c.startswith('dNII_') and c != 'dNII_path']
-
 mc_df['worst_dEVE'] = mc_df[shock_keys].min(axis=1)
 mc_df['worst_dNII'] = mc_df[nii_shock_keys].min(axis=1)
 
-var_worst_eve, es_worst_eve = compute_var_es(mc_df['worst_dEVE'].values)
-var_worst_nii, es_worst_nii = compute_var_es(mc_df['worst_dNII'].values)
+# Collect risk evolution data for charts
+risk_evolution = []
 
-print(f"  Worst dEVE:  Mean={mc_df['worst_dEVE'].mean():>10,.2f}  Std={mc_df['worst_dEVE'].std():>10,.2f}")
-print(f"               VaR(95%)={var_worst_eve:>10,.2f}  ES(95%)={es_worst_eve:>10,.2f}")
-print(f"  Worst dNII:  Mean={mc_df['worst_dNII'].mean():>10,.2f}  Std={mc_df['worst_dNII'].std():>10,.2f}")
-print(f"               VaR(95%)={var_worst_nii:>10,.2f}  ES(95%)={es_worst_nii:>10,.2f}")
+print(f"\n{'='*70}")
+print(f"RISK METRICS BY YEAR (95% Confidence Level)")
+print(f"{'='*70}")
 
-# Summary statistics table
-print(f"\n  --- Per-Scenario dEVE Summary ---")
+for yr in eval_years:
+    yr_df = mc_df[mc_df['year'] == yr]
+
+    var_eve, es_eve = compute_var_es(yr_df['dEVE_path'].values)
+    var_nii, es_nii = compute_var_es(yr_df['dNII_path'].values)
+    var_weve, es_weve = compute_var_es(yr_df['worst_dEVE'].values)
+    var_wnii, es_wnii = compute_var_es(yr_df['worst_dNII'].values)
+
+    print(f"\n  --- Year {yr} (balance median: {yr_df['balance'].median():,.0f}, "
+          f"rate median: {yr_df['rate'].median():.3%}) ---")
+    print(f"  dEVE path:   Mean={yr_df['dEVE_path'].mean():>10,.2f}  "
+          f"VaR={var_eve:>10,.2f}  ES={es_eve:>10,.2f}")
+    print(f"  dNII path:   Mean={yr_df['dNII_path'].mean():>10,.2f}  "
+          f"VaR={var_nii:>10,.2f}  ES={es_nii:>10,.2f}")
+    print(f"  Worst dEVE:  Mean={yr_df['worst_dEVE'].mean():>10,.2f}  "
+          f"VaR={var_weve:>10,.2f}  ES={es_weve:>10,.2f}")
+    print(f"  Worst dNII:  Mean={yr_df['worst_dNII'].mean():>10,.2f}  "
+          f"VaR={var_wnii:>10,.2f}  ES={es_wnii:>10,.2f}")
+
+    risk_evolution.append({
+        'year': yr,
+        'bal_median': yr_df['balance'].median(),
+        'rate_median': yr_df['rate'].median(),
+        'dEVE_mean': yr_df['dEVE_path'].mean(),
+        'dEVE_var': var_eve, 'dEVE_es': es_eve,
+        'dNII_mean': yr_df['dNII_path'].mean(),
+        'dNII_var': var_nii, 'dNII_es': es_nii,
+        'worst_dEVE_mean': yr_df['worst_dEVE'].mean(),
+        'worst_dEVE_var': var_weve, 'worst_dEVE_es': es_weve,
+        'worst_dNII_mean': yr_df['worst_dNII'].mean(),
+        'worst_dNII_var': var_wnii, 'worst_dNII_es': es_wnii,
+    })
+
+risk_evo_df = pd.DataFrame(risk_evolution)
+
+# Per-scenario detail for Year 1
+print(f"\n{'='*70}")
+print(f"YEAR 1 DETAILED SCENARIO BREAKDOWN")
+print(f"{'='*70}")
+mc_df_y1 = mc_df[mc_df['year'] == 1].copy().reset_index(drop=True)
+
+print(f"\n  --- Per-Scenario dEVE (Year 1) ---")
 print(f"  {'Scenario':<22} {'Mean':>10} {'Std':>10} {'VaR(95%)':>10} {'ES(95%)':>10}")
 print(f"  {'-'*62}")
 for skey in ['dEVE_path'] + shock_keys:
-    vals = mc_df[skey].values
+    vals = mc_df_y1[skey].values
     v, e = compute_var_es(vals)
     label = skey.replace('dEVE_', '').replace('_', ' ')
     print(f"  {label:<22} {np.mean(vals):>10,.2f} {np.std(vals):>10,.2f} {v:>10,.2f} {e:>10,.2f}")
 
-print(f"\n  --- Per-Scenario dNII Summary ---")
+print(f"\n  --- Per-Scenario dNII (Year 1) ---")
 print(f"  {'Scenario':<22} {'Mean':>10} {'Std':>10} {'VaR(95%)':>10} {'ES(95%)':>10}")
 print(f"  {'-'*62}")
 for skey in ['dNII_path'] + nii_shock_keys:
-    vals = mc_df[skey].values
+    vals = mc_df_y1[skey].values
     v, e = compute_var_es(vals)
     label = skey.replace('dNII_', '').replace('_', ' ')
     print(f"  {label:<22} {np.mean(vals):>10,.2f} {np.std(vals):>10,.2f} {v:>10,.2f} {e:>10,.2f}")
 
 # %%
-# === Section 6 Charts: Shock Impact Visualization ===
+# === Section 6 Chart 1: Multi-Year Risk Evolution ===
+
+fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+yrs = risk_evo_df['year'].values
+
+# --- EVE Risk Evolution ---
+ax1 = axes[0]
+ax1.fill_between(yrs, risk_evo_df['dEVE_es'], risk_evo_df['dEVE_mean'],
+                 alpha=0.15, color='steelblue')
+ax1.plot(yrs, risk_evo_df['dEVE_mean'], 'o-', color='steelblue', linewidth=2, label='Mean dEVE')
+ax1.plot(yrs, risk_evo_df['dEVE_var'], 's-', color='darkorange', linewidth=2, label='VaR(95%)')
+ax1.plot(yrs, risk_evo_df['dEVE_es'], '^-', color='red', linewidth=2, label='ES(95%)')
+ax1.plot(yrs, risk_evo_df['worst_dEVE_var'], 's--', color='darkred', linewidth=1.5, label='Worst Shock VaR(95%)')
+ax1.plot(yrs, risk_evo_df['worst_dEVE_es'], '^--', color='maroon', linewidth=1.5, label='Worst Shock ES(95%)')
+ax1.axhline(y=0, color='black', linestyle=':', linewidth=0.8)
+ax1.axhline(y=min(shock_eve.values()), color='gray', linestyle='--', linewidth=1,
+            label=f'Static worst ({min(shock_eve.values()):,.0f})')
+ax1.set_xlabel('Evaluation Year')
+ax1.set_ylabel('dEVE')
+ax1.set_title('EVE Risk Evolution Over 5 Years')
+ax1.legend(fontsize=7, loc='lower left')
+ax1.set_xticks([1, 2, 3, 4, 5])
+
+# --- NII Risk Evolution ---
+ax2 = axes[1]
+ax2.fill_between(yrs, risk_evo_df['dNII_es'], risk_evo_df['dNII_mean'],
+                 alpha=0.15, color='steelblue')
+ax2.plot(yrs, risk_evo_df['dNII_mean'], 'o-', color='steelblue', linewidth=2, label='Mean dNII')
+ax2.plot(yrs, risk_evo_df['dNII_var'], 's-', color='darkorange', linewidth=2, label='VaR(95%)')
+ax2.plot(yrs, risk_evo_df['dNII_es'], '^-', color='red', linewidth=2, label='ES(95%)')
+ax2.plot(yrs, risk_evo_df['worst_dNII_var'], 's--', color='darkred', linewidth=1.5, label='Worst Shock VaR(95%)')
+ax2.plot(yrs, risk_evo_df['worst_dNII_es'], '^--', color='maroon', linewidth=1.5, label='Worst Shock ES(95%)')
+ax2.axhline(y=0, color='black', linestyle=':', linewidth=0.8)
+ax2.axhline(y=min(shock_nii.values()), color='gray', linestyle='--', linewidth=1,
+            label=f'Static worst ({min(shock_nii.values()):,.0f})')
+ax2.set_xlabel('Evaluation Year')
+ax2.set_ylabel('dNII')
+ax2.set_title('NII Risk Evolution Over 5 Years')
+ax2.legend(fontsize=7, loc='lower left')
+ax2.set_xticks([1, 2, 3, 4, 5])
+
+plt.tight_layout()
+plt.savefig('mc_section6_risk_evolution.png', dpi=150, bbox_inches='tight')
+plt.show()
+print("Saved: mc_section6_risk_evolution.png")
+
+# %%
+# === Section 6 Chart 2: Year 1 Shock Impact (histograms + scatter + box) ===
 
 fig, axes = plt.subplots(2, 2, figsize=(16, 12))
 
-# --- Chart 1: dEVE distributions by scenario (overlapping histograms) ---
-ax1 = axes[0, 0]
 colors = {'path': 'steelblue', 'up200bps_Parallel': 'red',
           'dn200bps_Parallel': 'green', 'Short_Rate_Up': 'orange', 'Flattener': 'purple'}
-labels = {'path': 'MC Only (no shock)', 'up200bps_Parallel': '+200bps',
-          'dn200bps_Parallel': '-200bps', 'Short_Rate_Up': 'Short Rate Up', 'Flattener': 'Flattener'}
+labels_map = {'path': 'MC Only (no shock)', 'up200bps_Parallel': '+200bps',
+              'dn200bps_Parallel': '-200bps', 'Short_Rate_Up': 'Short Rate Up', 'Flattener': 'Flattener'}
 
+# --- Chart 1: dEVE distributions (Year 1) ---
+ax1 = axes[0, 0]
 for skey in ['dEVE_path'] + shock_keys:
     key_short = skey.replace('dEVE_', '')
-    ax1.hist(mc_df[skey], bins=50, alpha=0.35, color=colors.get(key_short, 'gray'),
-             label=labels.get(key_short, key_short), edgecolor='none')
+    ax1.hist(mc_df_y1[skey], bins=50, alpha=0.35, color=colors.get(key_short, 'gray'),
+             label=labels_map.get(key_short, key_short), edgecolor='none')
 ax1.axvline(x=0, color='black', linestyle='--', linewidth=1)
 ax1.set_xlabel('dEVE (change from static base)')
 ax1.set_ylabel('Frequency')
-ax1.set_title('dEVE Distribution: MC Paths vs Shock Scenarios')
+ax1.set_title('dEVE Distribution at Year 1')
 ax1.legend(fontsize=8)
 
-# --- Chart 2: dNII distributions by scenario ---
+# --- Chart 2: dNII distributions (Year 1) ---
 ax2 = axes[0, 1]
 for skey in ['dNII_path'] + nii_shock_keys:
     key_short = skey.replace('dNII_', '')
-    ax2.hist(mc_df[skey], bins=50, alpha=0.35, color=colors.get(key_short, 'gray'),
-             label=labels.get(key_short, key_short), edgecolor='none')
+    ax2.hist(mc_df_y1[skey], bins=50, alpha=0.35, color=colors.get(key_short, 'gray'),
+             label=labels_map.get(key_short, key_short), edgecolor='none')
 ax2.axvline(x=0, color='black', linestyle='--', linewidth=1)
 ax2.set_xlabel('dNII (change from static base)')
 ax2.set_ylabel('Frequency')
-ax2.set_title('dNII Distribution: MC Paths vs Shock Scenarios')
+ax2.set_title('dNII Distribution at Year 1')
 ax2.legend(fontsize=8)
 
-# --- Chart 3: Balance at Y1 vs dEVE (scatter) - shows balance drives risk ---
+# --- Chart 3: Balance vs dEVE scatter (Year 1) ---
 ax3 = axes[1, 0]
-sc = ax3.scatter(mc_df['balance_y1'], mc_df['dEVE_path'], c=mc_df['rate_y1'] * 100,
+sc = ax3.scatter(mc_df_y1['balance'], mc_df_y1['dEVE_path'], c=mc_df_y1['rate'] * 100,
                  cmap='coolwarm', alpha=0.4, s=10, edgecolors='none')
 ax3.axhline(y=0, color='black', linestyle='--', linewidth=0.8)
 ax3.axvline(x=calc_balance, color='red', linestyle='--', linewidth=0.8, label=f'Current bal ({calc_balance:,.0f})')
 ax3.set_xlabel('Balance at Year 1')
 ax3.set_ylabel('dEVE (MC path, no shock)')
-ax3.set_title('Balance vs dEVE (color = short rate at Y1)')
+ax3.set_title('Balance vs dEVE at Year 1 (color = short rate)')
 ax3.legend(fontsize=9)
 plt.colorbar(sc, ax=ax3, label='Short Rate (%)')
 
-# --- Chart 4: Worst dNII by scenario (box plot) ---
+# --- Chart 4: dNII box plot by scenario (Year 1) ---
 ax4 = axes[1, 1]
 box_data = []
 box_labels_list = []
 for skey in ['dNII_path'] + nii_shock_keys:
-    box_data.append(mc_df[skey].values)
+    box_data.append(mc_df_y1[skey].values)
     key_short = skey.replace('dNII_', '')
-    box_labels_list.append(labels.get(key_short, key_short))
+    box_labels_list.append(labels_map.get(key_short, key_short))
 bp = ax4.boxplot(box_data, labels=box_labels_list, patch_artist=True)
 box_colors = ['steelblue', 'red', 'green', 'orange', 'purple']
 for patch, col in zip(bp['boxes'], box_colors):
@@ -687,83 +755,62 @@ for patch, col in zip(bp['boxes'], box_colors):
     patch.set_alpha(0.4)
 ax4.axhline(y=0, color='black', linestyle='--', linewidth=0.8)
 ax4.set_ylabel('dNII')
-ax4.set_title('dNII Distribution by Scenario (Box Plot)')
+ax4.set_title('dNII by Scenario at Year 1 (Box Plot)')
 ax4.tick_params(axis='x', rotation=15)
 
 plt.tight_layout()
-plt.savefig('mc_section6_shocks.png', dpi=150, bbox_inches='tight')
+plt.savefig('mc_section6_shocks_y1.png', dpi=150, bbox_inches='tight')
 plt.show()
-print("Saved: mc_section6_shocks.png")
+print("Saved: mc_section6_shocks_y1.png")
 
 # %%
-# === Section 6 Chart 2: MC Paths — Balance + No Shock vs Shocked ===
+# === Section 6 Chart 3: dEVE Box Plots Across Years (multi-year comparison) ===
 
-fig, axes = plt.subplots(1, 3, figsize=(20, 6))
+fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
-# Sort paths by balance for a clean visual
-sort_idx = mc_df['balance_y1'].argsort().values
-path_x = np.arange(n_paths)
+# --- dEVE worst shock box plots per year ---
+ax1 = axes[0]
+box_data_eve = [mc_df[mc_df['year'] == yr]['worst_dEVE'].values for yr in eval_years]
+bp1 = ax1.boxplot(box_data_eve, labels=[f'Y{yr}' for yr in eval_years], patch_artist=True)
+yr_colors = ['#2196F3', '#4CAF50', '#FF9800', '#F44336', '#9C27B0']
+for patch, col in zip(bp1['boxes'], yr_colors):
+    patch.set_facecolor(col)
+    patch.set_alpha(0.5)
+ax1.axhline(y=0, color='black', linestyle=':', linewidth=0.8)
+ax1.axhline(y=min(shock_eve.values()), color='gray', linestyle='--', linewidth=1,
+            label=f'Static worst ({min(shock_eve.values()):,.0f})')
+ax1.set_xlabel('Evaluation Year')
+ax1.set_ylabel('Worst dEVE (across 4 shocks)')
+ax1.set_title('Worst-Case dEVE Distribution by Year')
+ax1.legend(fontsize=9)
 
-# --- Chart 1: Balance at Y1 per path (sorted) ---
-ax0 = axes[0]
-bal_sorted = mc_df['balance_y1'].values[sort_idx]
-ax0.plot(path_x, bal_sorted, color='steelblue', linewidth=0.8)
-ax0.axhline(y=calc_balance, color='red', linestyle='--', linewidth=1.2, label=f'Current ({calc_balance:,.0f})')
-ax0.axhline(y=np.percentile(bal_sorted, 5), color='gray', linestyle=':', linewidth=1, label=f'5th pctl ({np.percentile(bal_sorted, 5):,.0f})')
-ax0.axhline(y=np.percentile(bal_sorted, 95), color='gray', linestyle=':', linewidth=1, label=f'95th pctl ({np.percentile(bal_sorted, 95):,.0f})')
-ax0.fill_between(path_x, bal_sorted, calc_balance, where=bal_sorted < calc_balance,
-                 alpha=0.3, color='salmon', label='Below current')
-ax0.fill_between(path_x, bal_sorted, calc_balance, where=bal_sorted >= calc_balance,
-                 alpha=0.3, color='lightgreen', label='Above current')
-ax0.set_xlabel('Path (sorted by balance at Y1)')
-ax0.set_ylabel('Balance at Year 1')
-ax0.set_title(f'Balance at Y1 ({n_paths} paths, sorted)')
-ax0.legend(fontsize=7, loc='upper left')
-
-# --- Chart 2: EVE per path — no shock vs shocked ---
-ax1 = axes[1]
-eve_nosock = mc_df['eve_path'].values[sort_idx]
-eve_up200 = mc_df['eve_up200bps_Parallel'].values[sort_idx]
-eve_dn200 = mc_df['eve_dn200bps_Parallel'].values[sort_idx]
-
-ax1.fill_between(path_x, eve_dn200, eve_up200, alpha=0.15, color='red', label='Range: -200 to +200bps')
-ax1.plot(path_x, eve_nosock, color='steelblue', linewidth=0.5, alpha=0.8, label='MC Only (no shock)')
-ax1.plot(path_x, eve_up200, color='red', linewidth=0.5, alpha=0.6, label='+200bps shock')
-ax1.plot(path_x, eve_dn200, color='green', linewidth=0.5, alpha=0.6, label='-200bps shock')
-ax1.axhline(y=eve_base, color='black', linestyle='--', linewidth=1, label=f'Static base ({eve_base:,.0f})')
-ax1.set_xlabel('Path (sorted by balance at Y1)')
-ax1.set_ylabel('EVE')
-ax1.set_title(f'EVE: No Shock vs Shocked ({n_paths} paths)')
-ax1.legend(fontsize=7, loc='upper left')
-
-# --- Chart 3: NII per path — no shock vs shocked ---
-ax2 = axes[2]
-nii_nosock = mc_df['nii_path'].values[sort_idx]
-nii_up200 = mc_df['nii_up200bps_Parallel'].values[sort_idx]
-nii_dn200 = mc_df['nii_dn200bps_Parallel'].values[sort_idx]
-
-ax2.fill_between(path_x, nii_dn200, nii_up200, alpha=0.15, color='orange', label='Range: -200 to +200bps')
-ax2.plot(path_x, nii_nosock, color='steelblue', linewidth=0.5, alpha=0.8, label='MC Only (no shock)')
-ax2.plot(path_x, nii_up200, color='red', linewidth=0.5, alpha=0.6, label='+200bps shock')
-ax2.plot(path_x, nii_dn200, color='green', linewidth=0.5, alpha=0.6, label='-200bps shock')
-ax2.axhline(y=nii_base, color='black', linestyle='--', linewidth=1, label=f'Static base ({nii_base:,.0f})')
-ax2.set_xlabel('Path (sorted by balance at Y1)')
-ax2.set_ylabel('NII')
-ax2.set_title(f'NII: No Shock vs Shocked ({n_paths} paths)')
-ax2.legend(fontsize=7, loc='upper left')
+# --- dNII worst shock box plots per year ---
+ax2 = axes[1]
+box_data_nii = [mc_df[mc_df['year'] == yr]['worst_dNII'].values for yr in eval_years]
+bp2 = ax2.boxplot(box_data_nii, labels=[f'Y{yr}' for yr in eval_years], patch_artist=True)
+for patch, col in zip(bp2['boxes'], yr_colors):
+    patch.set_facecolor(col)
+    patch.set_alpha(0.5)
+ax2.axhline(y=0, color='black', linestyle=':', linewidth=0.8)
+ax2.axhline(y=min(shock_nii.values()), color='gray', linestyle='--', linewidth=1,
+            label=f'Static worst ({min(shock_nii.values()):,.0f})')
+ax2.set_xlabel('Evaluation Year')
+ax2.set_ylabel('Worst dNII (across 4 shocks)')
+ax2.set_title('Worst-Case dNII Distribution by Year')
+ax2.legend(fontsize=9)
 
 plt.tight_layout()
-plt.savefig('mc_section6_paths_shocked.png', dpi=150, bbox_inches='tight')
+plt.savefig('mc_section6_multiyear_box.png', dpi=150, bbox_inches='tight')
 plt.show()
-print("Saved: mc_section6_paths_shocked.png")
+print("Saved: mc_section6_multiyear_box.png")
 
 # %% [markdown]
 # ## Section 7: Save Outputs & Final Summary
 #
 # Save all results to CSV for reporting:
-# 1. MC path-level results (1,000 rows)
-# 2. Risk metrics summary
-# 3. Static sensitivity comparison (Section 4 vs MC)
+# 1. MC path-level results (1,000 paths x 5 years)
+# 2. Risk evolution summary (per year)
+# 3. Static sensitivity comparison (Section 4 vs MC Year 1)
 
 # %%
 print(f"\n{'='*70}")
@@ -771,19 +818,24 @@ print(f"SECTION 7: SAVE OUTPUTS & FINAL SUMMARY")
 print(f"{'='*70}")
 
 # --- 1. Save MC path-level results ---
-mc_output_cols = ['path', 'balance_y1', 'rate_y1', 'rate_shift', 'core_ratio',
+mc_output_cols = ['path', 'year', 'balance', 'rate', 'rate_shift', 'core_ratio',
                   'eve_path', 'nii_path', 'dEVE_path', 'dNII_path',
                   'worst_dEVE', 'worst_dNII']
 mc_df[mc_output_cols].to_csv('mc_v2_path_results.csv', index=False)
-print(f"\n  Saved: mc_v2_path_results.csv ({len(mc_df)} paths)")
+print(f"\n  Saved: mc_v2_path_results.csv ({len(mc_df)} records)")
 
-# --- 2. Build risk metrics summary ---
+# --- 2. Save risk evolution per year ---
+risk_evo_df.to_csv('mc_v2_risk_evolution.csv', index=False)
+print(f"  Saved: mc_v2_risk_evolution.csv ({len(risk_evo_df)} years)")
+
+# --- 3. Build risk metrics summary ---
 summary_rows = []
 
 # Static base case (Section 4)
 summary_rows.append({
     'Method': 'Static Base (Section 4)',
     'Scenario': 'Base',
+    'Year': '-',
     'EVE': eve_base,
     'NII': nii_base,
     'dEVE': 0,
@@ -793,75 +845,50 @@ for sname, delta in shock_eve.items():
     summary_rows.append({
         'Method': 'Static Stress (Section 4)',
         'Scenario': sname,
+        'Year': '-',
         'EVE': eve_base + delta,
         'NII': nii_base + nii_deltas.get(sname, 0),
         'dEVE': delta,
         'dNII': nii_deltas.get(sname, 0),
     })
 
-# MC path risk (no shock)
-summary_rows.append({
-    'Method': 'MC Path (no shock)',
-    'Scenario': 'Mean',
-    'EVE': mc_df['eve_path'].mean(),
-    'NII': mc_df['nii_path'].mean(),
-    'dEVE': mc_df['dEVE_path'].mean(),
-    'dNII': mc_df['dNII_path'].mean(),
-})
-summary_rows.append({
-    'Method': 'MC Path (no shock)',
-    'Scenario': 'VaR(95%)',
-    'EVE': np.nan,
-    'NII': np.nan,
-    'dEVE': var_eve,
-    'dNII': var_nii,
-})
-summary_rows.append({
-    'Method': 'MC Path (no shock)',
-    'Scenario': 'ES(95%)',
-    'EVE': np.nan,
-    'NII': np.nan,
-    'dEVE': es_eve,
-    'dNII': es_nii,
-})
+# MC per-year summary
+for yr in eval_years:
+    yr_df = mc_df[mc_df['year'] == yr]
+    v_eve, e_eve = compute_var_es(yr_df['dEVE_path'].values)
+    v_nii, e_nii = compute_var_es(yr_df['dNII_path'].values)
+    v_weve, e_weve = compute_var_es(yr_df['worst_dEVE'].values)
+    v_wnii, e_wnii = compute_var_es(yr_df['worst_dNII'].values)
 
-# MC worst-case shock
-summary_rows.append({
-    'Method': 'MC Worst Shock',
-    'Scenario': 'Mean',
-    'EVE': np.nan,
-    'NII': np.nan,
-    'dEVE': mc_df['worst_dEVE'].mean(),
-    'dNII': mc_df['worst_dNII'].mean(),
-})
-summary_rows.append({
-    'Method': 'MC Worst Shock',
-    'Scenario': 'VaR(95%)',
-    'EVE': np.nan,
-    'NII': np.nan,
-    'dEVE': var_worst_eve,
-    'dNII': var_worst_nii,
-})
-summary_rows.append({
-    'Method': 'MC Worst Shock',
-    'Scenario': 'ES(95%)',
-    'EVE': np.nan,
-    'NII': np.nan,
-    'dEVE': es_worst_eve,
-    'dNII': es_worst_nii,
-})
+    for method, scenario, deve, dnii in [
+        ('MC Path (no shock)', 'Mean', yr_df['dEVE_path'].mean(), yr_df['dNII_path'].mean()),
+        ('MC Path (no shock)', 'VaR(95%)', v_eve, v_nii),
+        ('MC Path (no shock)', 'ES(95%)', e_eve, e_nii),
+        ('MC Worst Shock', 'Mean', yr_df['worst_dEVE'].mean(), yr_df['worst_dNII'].mean()),
+        ('MC Worst Shock', 'VaR(95%)', v_weve, v_wnii),
+        ('MC Worst Shock', 'ES(95%)', e_weve, e_wnii),
+    ]:
+        summary_rows.append({
+            'Method': method,
+            'Scenario': scenario,
+            'Year': yr,
+            'EVE': np.nan,
+            'NII': np.nan,
+            'dEVE': deve,
+            'dNII': dnii,
+        })
 
 summary_df = pd.DataFrame(summary_rows)
 summary_df.to_csv('mc_v2_risk_summary.csv', index=False)
 print(f"  Saved: mc_v2_risk_summary.csv ({len(summary_df)} rows)")
 
-# --- 3. Save simulation parameters ---
+# --- 4. Save simulation parameters ---
 params = {
     'Parameter': [
         'Calculation Date', 'Balance', 'Core Ratio', 'Non-Core Ratio',
         'Core Method', 'Survival Model',
         'Mu Net Daily', 'Sigma Net Daily',
-        'N Paths', 'Horizon (days)',
+        'N Paths', 'Horizon (days)', 'Evaluation Years',
         'Vasicek r0', 'Vasicek kappa', 'Vasicek theta', 'Vasicek sigma_r',
         'Core Ratio Sigma', 'Random Seed',
     ],
@@ -869,7 +896,7 @@ params = {
         str(calc_date.date()), calc_balance, core_pct, non_core_pct,
         config['method'], 'Portfolio KM (Phase 1b)',
         mu_net, sigma_net,
-        n_paths, n_days_sim,
+        n_paths, n_days_sim, '1,2,3,4,5',
         r0, kappa_v, theta_v, sigma_r,
         sigma_core, seed,
     ]
@@ -879,33 +906,53 @@ print(f"  Saved: mc_v2_parameters.csv")
 
 # %%
 # --- Final Summary Print ---
+# Use Year 1 for comparison with static
+y1_eve_var, y1_eve_es = compute_var_es(mc_df_y1['dEVE_path'].values)
+y1_nii_var, y1_nii_es = compute_var_es(mc_df_y1['dNII_path'].values)
+y1_weve_var, y1_weve_es = compute_var_es(mc_df_y1['worst_dEVE'].values)
+y1_wnii_var, y1_wnii_es = compute_var_es(mc_df_y1['worst_dNII'].values)
+
 print(f"\n{'='*70}")
-print(f"FINAL COMPARISON: Static vs Monte Carlo")
+print(f"FINAL COMPARISON: Static vs Monte Carlo (Year 1)")
 print(f"{'='*70}")
-print(f"\n  {'Metric':<30} {'Static (S4)':>14} {'MC Mean':>14} {'MC VaR(95%)':>14} {'MC ES(95%)':>14}")
+print(f"\n  {'Metric':<30} {'Static':>14} {'MC Mean':>14} {'MC VaR(95%)':>14} {'MC ES(95%)':>14}")
 print(f"  {'-'*72}")
-print(f"  {'dEVE (no shock)':<30} {'N/A':>14} {mc_df['dEVE_path'].mean():>14,.2f} {var_eve:>14,.2f} {es_eve:>14,.2f}")
-print(f"  {'dEVE (+200bps)':<30} {shock_eve.get('+200bps Parallel',0):>14,.2f} {mc_df['dEVE_up200bps_Parallel'].mean():>14,.2f} {compute_var_es(mc_df['dEVE_up200bps_Parallel'].values)[0]:>14,.2f} {compute_var_es(mc_df['dEVE_up200bps_Parallel'].values)[1]:>14,.2f}")
-print(f"  {'dEVE (worst shock)':<30} {min(shock_eve.values()):>14,.2f} {mc_df['worst_dEVE'].mean():>14,.2f} {var_worst_eve:>14,.2f} {es_worst_eve:>14,.2f}")
+print(f"  {'dEVE (no shock)':<30} {'N/A':>14} {mc_df_y1['dEVE_path'].mean():>14,.2f} {y1_eve_var:>14,.2f} {y1_eve_es:>14,.2f}")
+print(f"  {'dEVE (+200bps)':<30} {shock_eve.get('+200bps Parallel',0):>14,.2f} {mc_df_y1['dEVE_up200bps_Parallel'].mean():>14,.2f} {compute_var_es(mc_df_y1['dEVE_up200bps_Parallel'].values)[0]:>14,.2f} {compute_var_es(mc_df_y1['dEVE_up200bps_Parallel'].values)[1]:>14,.2f}")
+print(f"  {'dEVE (worst shock)':<30} {min(shock_eve.values()):>14,.2f} {mc_df_y1['worst_dEVE'].mean():>14,.2f} {y1_weve_var:>14,.2f} {y1_weve_es:>14,.2f}")
 print(f"  {'-'*72}")
-print(f"  {'dNII (no shock)':<30} {'N/A':>14} {mc_df['dNII_path'].mean():>14,.2f} {var_nii:>14,.2f} {es_nii:>14,.2f}")
-print(f"  {'dNII (-200bps)':<30} {nii_deltas.get('-200bps Parallel',0):>14,.2f} {mc_df['dNII_dn200bps_Parallel'].mean():>14,.2f} {compute_var_es(mc_df['dNII_dn200bps_Parallel'].values)[0]:>14,.2f} {compute_var_es(mc_df['dNII_dn200bps_Parallel'].values)[1]:>14,.2f}")
-print(f"  {'dNII (worst shock)':<30} {min(shock_nii.values()):>14,.2f} {mc_df['worst_dNII'].mean():>14,.2f} {var_worst_nii:>14,.2f} {es_worst_nii:>14,.2f}")
+print(f"  {'dNII (no shock)':<30} {'N/A':>14} {mc_df_y1['dNII_path'].mean():>14,.2f} {y1_nii_var:>14,.2f} {y1_nii_es:>14,.2f}")
+print(f"  {'dNII (-200bps)':<30} {nii_deltas.get('-200bps Parallel',0):>14,.2f} {mc_df_y1['dNII_dn200bps_Parallel'].mean():>14,.2f} {compute_var_es(mc_df_y1['dNII_dn200bps_Parallel'].values)[0]:>14,.2f} {compute_var_es(mc_df_y1['dNII_dn200bps_Parallel'].values)[1]:>14,.2f}")
+print(f"  {'dNII (worst shock)':<30} {min(shock_nii.values()):>14,.2f} {mc_df_y1['worst_dNII'].mean():>14,.2f} {y1_wnii_var:>14,.2f} {y1_wnii_es:>14,.2f}")
+
+# Multi-year risk evolution table
+print(f"\n{'='*70}")
+print(f"RISK EVOLUTION OVER 5 YEARS")
+print(f"{'='*70}")
+print(f"\n  {'Year':>4}  {'Bal Median':>12}  {'Rate Med':>10}  {'dEVE VaR':>12}  {'dEVE ES':>12}  {'dNII VaR':>12}  {'dNII ES':>12}")
+print(f"  {'-'*78}")
+for _, row in risk_evo_df.iterrows():
+    print(f"  {int(row['year']):>4}  {row['bal_median']:>12,.0f}  {row['rate_median']:>10.3%}  "
+          f"{row['worst_dEVE_var']:>12,.2f}  {row['worst_dEVE_es']:>12,.2f}  "
+          f"{row['worst_dNII_var']:>12,.2f}  {row['worst_dNII_es']:>12,.2f}")
 
 print(f"\n  Key Insights:")
 print(f"  - Static stress test gives a SINGLE number (e.g. dEVE = {min(shock_eve.values()):,.2f})")
-print(f"  - MC gives a DISTRIBUTION: VaR(95%) = {var_worst_eve:,.2f}, ES(95%) = {es_worst_eve:,.2f}")
-print(f"  - Balance uncertainty (VaR dEVE = {var_eve:,.2f}) >> rate shock effect ({min(shock_eve.values()):,.2f})")
-print(f"  - Rate shocks mainly impact NII, not EVE for this short-duration NMD portfolio")
+print(f"  - MC at Y1: VaR(95%) = {y1_weve_var:,.2f}, ES(95%) = {y1_weve_es:,.2f}")
+print(f"  - Risk grows with time as balance and rate uncertainty compound")
+print(f"  - Balance uncertainty dominates rate shock effects for this NMD portfolio")
 
 print(f"\n{'='*70}")
 print(f"PHASE 5d (v2) COMPLETE")
 print(f"{'='*70}")
 print(f"\nOutput files:")
-print(f"  mc_v2_path_results.csv  - Per-path MC results (1,000 rows)")
-print(f"  mc_v2_risk_summary.csv  - Risk metrics comparison table")
-print(f"  mc_v2_parameters.csv    - Simulation parameters")
-print(f"  mc_section5_paths.png   - Balance & rate path fan charts")
-print(f"  mc_section6_shocks.png  - Shock impact visualizations")
+print(f"  mc_v2_path_results.csv      - Per-path MC results ({n_paths} paths x {len(eval_years)} years)")
+print(f"  mc_v2_risk_evolution.csv    - Risk metrics per evaluation year")
+print(f"  mc_v2_risk_summary.csv      - Full risk metrics comparison table")
+print(f"  mc_v2_parameters.csv        - Simulation parameters")
+print(f"  mc_section5_paths.png       - Balance & rate path fan charts (5Y)")
+print(f"  mc_section6_risk_evolution.png - Risk evolution over 5 years")
+print(f"  mc_section6_shocks_y1.png   - Year 1 shock impact visualizations")
+print(f"  mc_section6_multiyear_box.png - Multi-year worst-case box plots")
 
 # %%
