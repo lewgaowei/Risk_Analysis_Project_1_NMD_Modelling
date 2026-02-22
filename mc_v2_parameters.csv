@@ -1,0 +1,18 @@
+Parameter,Value
+Calculation Date,2023-12-30
+Balance,18651.70481694874
+Core Ratio,0.8617873578084627
+Non-Core Ratio,0.13821264219153734
+Lambda Daily (gross outflow),0.018552211231427123
+Sigma Decay,0.005175396673002043
+Mu Net Daily,0.0002824278066428801
+Sigma Net Daily,0.00900678002300492
+Avg Monthly Outflow,0.5584971464955434
+N Paths,1000
+Horizon (days),1825
+Vasicek r0,0.0375
+Vasicek kappa,0.5
+Vasicek theta,0.0375
+Vasicek sigma_r,0.01
+Core Ratio Sigma,0.05
+Random Seed,42

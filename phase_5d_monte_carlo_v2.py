@@ -5,23 +5,24 @@
 #
 # **Calculation Date:** 30-Dec-2023
 #
-# Standalone Monte Carlo simulation following the reference methodology:
-# - Stochastic balance paths (noisy decay rate) over 5 years
+# Monte Carlo simulation using Phase 1-4 results:
+# - Stochastic balance paths (noisy net flow rate) over 5 years
 # - Stochastic interest rate paths (Vasicek model)
-# - Dynamic core/non-core separation: max(5th pctl, trend, hist min) x 0.9
-# - 9 Basel buckets (O/N, 1M, 3M, 6M, 1Y, 2Y, 3Y, 4Y, 5Y)
-# - EVE and NII sensitivity under 4 shock scenarios
+# - Core ratio from config.json (Phase 1c Detrended Regression)
+# - 11 IRRBB buckets with Portfolio KM survival curve (Phase 1b/2)
+# - Actual yield curve from processed_curve_data.csv (Phase 1a)
+# - EVE and NII sensitivity under 4 shock scenarios (Phase 3/4)
 # - VaR/ES risk metrics at 95% confidence
 
 # %% [markdown]
 # ## Section 1: Setup & Data Loading
 
 # %%
+import json
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
-from numpy.polynomial import polynomial as P
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -68,47 +69,28 @@ print(f"    Sigma:                            {sigma_net:.6f}")
 print(f"    Days with positive net flow:      {(df['Netflow'] > 0).mean():.1%}")
 
 # %% [markdown]
-# ## Section 2: Core vs Non-Core Deposit Separation (Reference Method)
+# ## Section 2: Core vs Non-Core Deposit Separation
 #
-# Uses 3 methods, takes the max, and applies a 10% conservative haircut:
-# - Method 1: Historical minimum balance
-# - Method 2: 5th percentile of balance distribution
-# - Method 3: Trend-based core (linear fit + minimum residual)
-#
-# Core = max(hist_min, 5th_pctl, trend_core) x 0.9
+# Loads core ratio from config.json (produced by Phase 1c Detrended Regression).
+# Core ratio = 83.57% — used as the base for MC perturbation.
 
 # %%
-# Method 1: Historical minimum
-historical_min = df['Balance'].min()
+# Load core ratio from Phase 1c output
+with open('config.json', 'r') as f:
+    config = json.load(f)
 
-# Method 2: 5th percentile
-balance_q05 = df['Balance'].quantile(0.05)
-
-# Method 3: Trend-based core
-t_days = (df['Date'] - df['Date'].iloc[0]).dt.days.values
-coeffs = P.polyfit(t_days, df['Balance'].values, 1)
-trend_at_calc = P.polyval(t_days[-1], coeffs)
-min_residual = (df['Balance'].values - P.polyval(t_days, coeffs)).min()
-core_deposit_trend = trend_at_calc + min_residual
-
-# Final core: max of all methods x 0.9 conservative haircut
-core_deposit_final = max(balance_q05, core_deposit_trend, historical_min) * 0.9
-core_deposit_final = min(core_deposit_final, calc_balance)  # can't exceed balance
-non_core_deposit_final = calc_balance - core_deposit_final
-
-core_pct = core_deposit_final / calc_balance
-non_core_pct = non_core_deposit_final / calc_balance
+core_pct = config['core_ratio_pct'] / 100  # 0.8357
+non_core_pct = 1 - core_pct
 
 print(f"\n{'='*60}")
-print(f"CORE vs NON-CORE SEPARATION (Reference Method)")
+print(f"CORE vs NON-CORE SEPARATION (from config.json)")
 print(f"{'='*60}")
-print(f"  Method 1 - Historical Min:     {historical_min:>12,.2f}")
-print(f"  Method 2 - 5th Percentile:     {balance_q05:>12,.2f}")
-print(f"  Method 3 - Trend-based Core:   {core_deposit_trend:>12,.2f}")
-print(f"  {'---'*15}")
-print(f"  Final Core (max x 0.9):        {core_deposit_final:>12,.2f}  ({core_pct:.1%})")
-print(f"  Final Non-Core:                {non_core_deposit_final:>12,.2f}  ({non_core_pct:.1%})")
-print(f"  Total Balance:                 {calc_balance:>12,.2f}")
+print(f"  Method:           {config['method']}")
+print(f"  Core Ratio:       {core_pct:.4f}  ({core_pct:.2%})")
+print(f"  Non-Core Ratio:   {non_core_pct:.4f}  ({non_core_pct:.2%})")
+print(f"  Core Amount:      {config['core_amount']:>12,.2f}")
+print(f"  Non-Core Amount:  {config['non_core_amount']:>12,.2f}")
+print(f"  Total Balance:    {calc_balance:>12,.2f}")
 
 # %% [markdown]
 # ## Section 3: Cash Flow Slotting (9 Basel Buckets)
