@@ -596,8 +596,11 @@ for yr in eval_years:
     var_weve, es_weve = compute_var_es(yr_df['worst_dEVE'].values)
     var_wnii, es_wnii = compute_var_es(yr_df['worst_dNII'].values)
 
-    print(f"\n  --- Year {yr} (balance median: {yr_df['balance'].median():,.0f}, "
-          f"rate median: {yr_df['rate'].median():.3%}) ---")
+    bal_5pctl = yr_df['balance'].quantile(0.05)
+    bal_median = yr_df['balance'].median()
+
+    print(f"\n  --- Year {yr} (balance median: {bal_median:,.0f}, "
+          f"balance 5th pctl: {bal_5pctl:,.0f}, rate median: {yr_df['rate'].median():.3%}) ---")
     print(f"  dEVE path:   Mean={yr_df['dEVE_path'].mean():>10,.2f}  "
           f"VaR={var_eve:>10,.2f}  ES={es_eve:>10,.2f}")
     print(f"  dNII path:   Mean={yr_df['dNII_path'].mean():>10,.2f}  "
@@ -609,7 +612,8 @@ for yr in eval_years:
 
     risk_evolution.append({
         'year': yr,
-        'bal_median': yr_df['balance'].median(),
+        'bal_median': bal_median,
+        'bal_5pctl': bal_5pctl,
         'rate_median': yr_df['rate'].median(),
         'dEVE_mean': yr_df['dEVE_path'].mean(),
         'dEVE_var': var_eve, 'dEVE_es': es_eve,
@@ -905,54 +909,131 @@ pd.DataFrame(params).to_csv('mc_v2_parameters.csv', index=False)
 print(f"  Saved: mc_v2_parameters.csv")
 
 # %%
-# --- Final Summary Print ---
-# Use Year 1 for comparison with static
-y1_eve_var, y1_eve_es = compute_var_es(mc_df_y1['dEVE_path'].values)
-y1_nii_var, y1_nii_es = compute_var_es(mc_df_y1['dNII_path'].values)
-y1_weve_var, y1_weve_es = compute_var_es(mc_df_y1['worst_dEVE'].values)
-y1_wnii_var, y1_wnii_es = compute_var_es(mc_df_y1['worst_dNII'].values)
+# --- Section 7: Final Summary & Presentation Analysis ---
+print(f"\n{'='*80}")
+print(f"SECTION 7: FINAL COMPARISON — Static vs Monte Carlo (All Years)")
+print(f"{'='*80}")
 
-print(f"\n{'='*70}")
-print(f"FINAL COMPARISON: Static vs Monte Carlo (Year 1)")
-print(f"{'='*70}")
-print(f"\n  {'Metric':<30} {'Static':>14} {'MC Mean':>14} {'MC VaR(95%)':>14} {'MC ES(95%)':>14}")
-print(f"  {'-'*72}")
-print(f"  {'dEVE (no shock)':<30} {'N/A':>14} {mc_df_y1['dEVE_path'].mean():>14,.2f} {y1_eve_var:>14,.2f} {y1_eve_es:>14,.2f}")
-print(f"  {'dEVE (+200bps)':<30} {shock_eve.get('+200bps Parallel',0):>14,.2f} {mc_df_y1['dEVE_up200bps_Parallel'].mean():>14,.2f} {compute_var_es(mc_df_y1['dEVE_up200bps_Parallel'].values)[0]:>14,.2f} {compute_var_es(mc_df_y1['dEVE_up200bps_Parallel'].values)[1]:>14,.2f}")
-print(f"  {'dEVE (worst shock)':<30} {min(shock_eve.values()):>14,.2f} {mc_df_y1['worst_dEVE'].mean():>14,.2f} {y1_weve_var:>14,.2f} {y1_weve_es:>14,.2f}")
-print(f"  {'-'*72}")
-print(f"  {'dNII (no shock)':<30} {'N/A':>14} {mc_df_y1['dNII_path'].mean():>14,.2f} {y1_nii_var:>14,.2f} {y1_nii_es:>14,.2f}")
-print(f"  {'dNII (-200bps)':<30} {nii_deltas.get('-200bps Parallel',0):>14,.2f} {mc_df_y1['dNII_dn200bps_Parallel'].mean():>14,.2f} {compute_var_es(mc_df_y1['dNII_dn200bps_Parallel'].values)[0]:>14,.2f} {compute_var_es(mc_df_y1['dNII_dn200bps_Parallel'].values)[1]:>14,.2f}")
-print(f"  {'dNII (worst shock)':<30} {min(shock_nii.values()):>14,.2f} {mc_df_y1['worst_dNII'].mean():>14,.2f} {y1_wnii_var:>14,.2f} {y1_wnii_es:>14,.2f}")
+# Static baseline
+print(f"\n  STATIC STRESS TEST (Phase 3/4 — point-in-time):")
+print(f"    Worst dEVE: {min(shock_eve.values()):>10,.2f}  (scenario: {min(shock_eve, key=shock_eve.get)})")
+print(f"    Worst dNII: {min(shock_nii.values()):>10,.2f}  (scenario: {min(shock_nii, key=shock_nii.get)})")
 
-# Multi-year risk evolution table
-print(f"\n{'='*70}")
-print(f"RISK EVOLUTION OVER 5 YEARS")
-print(f"{'='*70}")
-print(f"\n  {'Year':>4}  {'Bal Median':>12}  {'Rate Med':>10}  {'dEVE VaR':>12}  {'dEVE ES':>12}  {'dNII VaR':>12}  {'dNII ES':>12}")
-print(f"  {'-'*78}")
+# Multi-year MC comparison with balance context
+print(f"\n  MONTE CARLO RISK METRICS ({n_paths:,} paths, 95% confidence):")
+print(f"  {'':>4}  {'-- Balance --':^20}  {'--- dEVE (Economic Value) ---':^42}  {'--- dNII (Net Interest Income) ---':^42}")
+print(f"  {'Year':>4}  {'Median':>10}  {'5th Pctl':>10}  {'Mean':>10}  {'VaR(95%)':>10}  {'ES(95%)':>10}  {'Worst VaR':>10}  {'Mean':>10}  {'VaR(95%)':>10}  {'ES(95%)':>10}  {'Worst VaR':>10}")
+print(f"  {'-'*116}")
 for _, row in risk_evo_df.iterrows():
-    print(f"  {int(row['year']):>4}  {row['bal_median']:>12,.0f}  {row['rate_median']:>10.3%}  "
-          f"{row['worst_dEVE_var']:>12,.2f}  {row['worst_dEVE_es']:>12,.2f}  "
-          f"{row['worst_dNII_var']:>12,.2f}  {row['worst_dNII_es']:>12,.2f}")
+    yr = int(row['year'])
+    print(f"  {yr:>4}  {row['bal_median']:>10,.0f}  {row['bal_5pctl']:>10,.0f}  "
+          f"{row['dEVE_mean']:>10,.0f}  {row['dEVE_var']:>10,.0f}  {row['dEVE_es']:>10,.0f}  "
+          f"{row['worst_dEVE_var']:>10,.0f}  "
+          f"{row['dNII_mean']:>10,.1f}  {row['dNII_var']:>10,.1f}  {row['dNII_es']:>10,.1f}  "
+          f"{row['worst_dNII_var']:>10,.1f}")
+print(f"  {'-'*116}")
+print(f"  Static: {calc_balance:>10,.0f}  {'':>10}  "
+      f"{'':>10}  {min(shock_eve.values()):>10,.0f}  {'':>10}  {'':>10}  "
+      f"{'':>10}  {min(shock_nii.values()):>10,.1f}")
 
-print(f"\n  Key Insights:")
-print(f"  - Static stress test gives a SINGLE number (e.g. dEVE = {min(shock_eve.values()):,.2f})")
-print(f"  - MC at Y1: VaR(95%) = {y1_weve_var:,.2f}, ES(95%) = {y1_weve_es:,.2f}")
-print(f"  - Risk grows with time as balance and rate uncertainty compound")
-print(f"  - Balance uncertainty dominates rate shock effects for this NMD portfolio")
+# ---- KEY FINDINGS ----
+static_worst_eve = min(shock_eve.values())
+y1_worst_var = risk_evo_df.iloc[0]['worst_dEVE_var']
+y1_worst_es = risk_evo_df.iloc[0]['worst_dEVE_es']
+y1_path_var = risk_evo_df.iloc[0]['dEVE_var']
+# Find the year with worst ES
+worst_es_idx = risk_evo_df['worst_dEVE_es'].idxmin()
+worst_es_yr = int(risk_evo_df.iloc[worst_es_idx]['year'])
+worst_es_val = risk_evo_df.iloc[worst_es_idx]['worst_dEVE_es']
+pct_from_paths = abs(y1_path_var) / abs(y1_worst_var) * 100
 
-print(f"\n{'='*70}")
-print(f"PHASE 5d (v2) COMPLETE")
-print(f"{'='*70}")
+print(f"\n{'='*80}")
+print(f"KEY FINDINGS — PRESENTATION ANALYSIS")
+print(f"{'='*80}")
+
+print(f"""
+  NOTE ON BALANCE MEDIAN vs NEGATIVE dEVE:
+  ─────────────────────────────────────────
+  The balance median shows the TYPICAL (50th percentile) path — most paths
+  see balance growth due to positive net flow drift.
+
+  The negative dEVE VaR/ES values represent the WORST 5% of paths (tail risk),
+  where balances dropped significantly AND rates moved adversely at the same time.
+
+  Example at Year 1:
+    Balance median  = {risk_evo_df.iloc[0]['bal_median']:>10,.0f}  (typical path — balance grew)
+    Balance 5th pctl= {risk_evo_df.iloc[0]['bal_5pctl']:>10,.0f}  (tail path — balance dropped)
+    dEVE mean       = {risk_evo_df.iloc[0]['dEVE_mean']:>+10,.0f}  (average outcome is POSITIVE)
+    dEVE VaR(95%)   = {risk_evo_df.iloc[0]['dEVE_var']:>+10,.0f}  (worst 5% — large NEGATIVE)
+
+  This is exactly what Monte Carlo adds: it reveals that while the median
+  outlook is favourable, the tail scenarios carry significant downside risk
+  that static stress tests cannot capture.
+""")
+
+print(f"  ┌────────────────────────────────────────────────────────────┐")
+print(f"  │  SLIDE 1: Static vs Monte Carlo — Why MC Matters          │")
+print(f"  └────────────────────────────────────────────────────────────┘")
+print(f"""
+  1. STATIC UNDERESTIMATES RISK
+     Static worst dEVE    = {static_worst_eve:>10,.0f}  (+200bps parallel shock)
+     MC Worst VaR(95%) Y1 = {y1_worst_var:>10,.0f}  (stochastic balance + rate + shock)
+     MC is {abs(y1_worst_var / static_worst_eve):.1f}x LARGER than static
+     -> Static assumes deterministic balance & fixed curve — MC adds real-world
+        uncertainty in deposit flows and interest rate dynamics.
+
+  2. TAIL RISK GROWS WITH HORIZON
+     Worst ES(95%): Y1 = {y1_worst_es:>10,.0f} → Y{worst_es_yr} = {worst_es_val:>10,.0f} ({abs(worst_es_val/y1_worst_es - 1)*100:.0f}% increase)
+     -> Longer horizons compound balance volatility and rate drift,
+        amplifying worst-case outcomes over time.
+
+  3. BALANCE/RATE PATHS DOMINATE THE RISK
+     Path-only VaR(95%) = {y1_path_var:>10,.0f}
+     -> {pct_from_paths:.0f}% of Year 1 tail risk comes from stochastic balance/rate
+        paths ALONE, before any shock scenario is applied.
+     -> The "which shock scenario?" question matters less than "what if
+        deposit balances decline and rates drift?"
+""")
+
+print(f"  ┌────────────────────────────────────────────────────────────┐")
+print(f"  │  SLIDE 2: NII Risk & Multi-Year Dynamics                  │")
+print(f"  └────────────────────────────────────────────────────────────┘")
+print(f"""
+  4. NII ZERO-FLOOR SATURATION
+     Worst NII VaR = {risk_evo_df.iloc[0]['worst_dNII_var']:>10,.1f} at ALL years
+     Base NII      = {nii_base:>10,.1f}
+     -> Under -200bps parallel shock, rates hit the zero floor, eliminating
+        ALL net interest income (dNII = -base NII exactly).
+     -> This means NII tail risk is bounded: you cannot lose more than
+        your entire interest income. The zero floor acts as a natural cap.
+
+  5. BALANCE GROWTH vs TAIL DRAWDOWN
+     Median balance: {risk_evo_df.iloc[0]['bal_median']:>8,.0f} (Y1) → {risk_evo_df.iloc[4]['bal_median']:>8,.0f} (Y5)  (+{(risk_evo_df.iloc[4]['bal_median']/risk_evo_df.iloc[0]['bal_median']-1)*100:.0f}%)
+     5th pctl bal:   {risk_evo_df.iloc[0]['bal_5pctl']:>8,.0f} (Y1) → {risk_evo_df.iloc[4]['bal_5pctl']:>8,.0f} (Y5)
+     -> Most paths show healthy growth, but the worst 5% of paths see
+        balance decline to {risk_evo_df.iloc[4]['bal_5pctl']:,.0f} — a {abs(risk_evo_df.iloc[4]['bal_5pctl']/calc_balance-1)*100:.0f}% {"drop" if risk_evo_df.iloc[4]['bal_5pctl'] < calc_balance else "gain"} from the starting {calc_balance:,.0f}.
+     -> These tail paths drive the large negative dEVE VaR/ES values.
+
+  6. RISK MANAGEMENT IMPLICATIONS
+     -> Capital buffers should be sized to MC ES, not static dEVE:
+        MC ES at Y{worst_es_yr} = {abs(worst_es_val):,.0f} vs Static = {abs(static_worst_eve):,.0f}
+        ({abs(worst_es_val / static_worst_eve):.1f}x ratio)
+     -> NII hedging is less critical at short tenors (zero-floor caps losses),
+        but EVE sensitivity requires active duration management.
+     -> Multi-year horizon reveals compounding risk that 1Y-only analysis misses.
+""")
+
+print(f"{'='*80}")
+print(f"PHASE 5d (v2) COMPLETE — Monte Carlo Simulation for IRRBB")
+print(f"{'='*80}")
 print(f"\nOutput files:")
-print(f"  mc_v2_path_results.csv      - Per-path MC results ({n_paths} paths x {len(eval_years)} years)")
-print(f"  mc_v2_risk_evolution.csv    - Risk metrics per evaluation year")
-print(f"  mc_v2_risk_summary.csv      - Full risk metrics comparison table")
-print(f"  mc_v2_parameters.csv        - Simulation parameters")
-print(f"  mc_section5_paths.png       - Balance & rate path fan charts (5Y)")
-print(f"  mc_section6_risk_evolution.png - Risk evolution over 5 years")
-print(f"  mc_section6_shocks_y1.png   - Year 1 shock impact visualizations")
-print(f"  mc_section6_multiyear_box.png - Multi-year worst-case box plots")
+print(f"  mc_v2_path_results.csv        - Per-path MC results ({n_paths} paths x {len(eval_years)} years)")
+print(f"  mc_v2_risk_evolution.csv       - Risk metrics per evaluation year")
+print(f"  mc_v2_risk_summary.csv         - Full risk metrics comparison table")
+print(f"  mc_v2_parameters.csv           - Simulation parameters")
+print(f"  mc_section5_paths.png          - Balance & rate path fan charts (5Y)")
+print(f"  mc_section6_risk_evolution.png  - Risk evolution over 5 years")
+print(f"  mc_section6_shocks_y1.png      - Year 1 shock impact visualizations")
+print(f"  mc_section6_multiyear_box.png  - Multi-year worst-case box plots")
 
 # %%

@@ -139,9 +139,15 @@ def load_yield_curve():
 
 @st.cache_data
 def load_survival_curve():
-    """Load Portfolio KM survival curve from Phase 1b"""
+    """Load Portfolio KM survival curve from Phase 1b (daily, for smooth plotting)"""
     surv = pd.read_csv('survival_curve_full_advanced.csv')
     return surv
+
+@st.cache_data
+def load_survival_table():
+    """Load survival function table for ALL models from Phase 1b"""
+    df = pd.read_csv('survival_function_table_advanced.csv')
+    return df
 
 @st.cache_data
 def build_curve_interpolator(curve_df):
@@ -156,13 +162,31 @@ def build_curve_interpolator(curve_df):
     return interpolator
 
 def build_survival_interpolator(surv_df):
-    """Build interpolation function for Portfolio KM survival curve"""
+    """Build interpolation function for Portfolio KM survival curve (daily data)"""
     interpolator = interp1d(
         surv_df['Days'].values,
         surv_df['S(t)'].values,
         kind='linear',
         bounds_error=False,
         fill_value=(1.0, surv_df['S(t)'].values[-1])
+    )
+    return interpolator
+
+def build_survival_interpolator_from_table(surv_table_df, model_name):
+    """Build interpolation function from survival function table for any model"""
+    col_map = {
+        "Exponential": "S(t)_Exponential",
+        "Weibull": "S(t)_Weibull",
+        "Log-Normal": "S(t)_LogNormal",
+        "Log-Logistic": "S(t)_LogLogistic",
+    }
+    col = col_map[model_name]
+    interpolator = interp1d(
+        surv_table_df['Days'].values,
+        surv_table_df[col].values,
+        kind='linear',
+        bounds_error=False,
+        fill_value=(1.0, float(surv_table_df[col].values[-1]))
     )
     return interpolator
 
@@ -282,19 +306,37 @@ def plot_balance_history(df):
     )
     return fig
 
-def plot_survival_curve(surv_df):
-    """Plot Portfolio KM survival curve"""
+def plot_survival_curve(surv_df, surv_table=None, model_name="Portfolio KM"):
+    """Plot survival curve for selected model"""
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=surv_df['Years'], y=surv_df['S(t)'] * 100,
-        mode='lines', fill='tozeroy',
-        line=dict(color='#2ecc71', width=3),
-        name='Portfolio KM S(t)'
-    ))
+    if model_name == "Portfolio KM" and surv_df is not None:
+        # Smooth daily curve from Portfolio KM
+        fig.add_trace(go.Scatter(
+            x=surv_df['Years'], y=surv_df['S(t)'] * 100,
+            mode='lines', fill='tozeroy',
+            line=dict(color='#2ecc71', width=3),
+            name=f'{model_name} S(t)'
+        ))
+    elif surv_table is not None:
+        # Table data points for parametric models
+        col_map = {
+            "Exponential": "S(t)_Exponential",
+            "Weibull": "S(t)_Weibull",
+            "Log-Normal": "S(t)_LogNormal",
+            "Log-Logistic": "S(t)_LogLogistic",
+        }
+        col = col_map.get(model_name, "S(t)_Portfolio_KM")
+        fig.add_trace(go.Scatter(
+            x=surv_table['Years'], y=surv_table[col] * 100,
+            mode='lines+markers', fill='tozeroy',
+            line=dict(color='#2ecc71', width=3),
+            marker=dict(size=8),
+            name=f'{model_name} S(t)'
+        ))
     fig.add_vline(x=5, line_dash="dash", line_color="red",
                   annotation_text="5Y Regulatory Cap")
     fig.update_layout(
-        title="Deposit Survival Curve - Portfolio Kaplan-Meier",
+        title=f"Deposit Survival Curve - {model_name}",
         xaxis_title="Years", yaxis_title="% of Core Remaining",
         height=400, yaxis_range=[0, 105], xaxis_range=[0, 5.5]
     )
@@ -359,39 +401,92 @@ def main():
         config = load_config()
         curve_df = load_yield_curve()
         surv_df = load_survival_curve()
+        surv_table = load_survival_table()
         curve_interpolator = build_curve_interpolator(curve_df)
-        survival_interp = build_survival_interpolator(surv_df)
         CALC_DATE_BALANCE = config['current_balance']
     except Exception as e:
         st.error(f"Error loading data files: {e}")
-        st.info("Ensure config.json, processed_curve_data.csv, survival_curve_full_advanced.csv, and group-proj-1-data.xlsx are present.")
+        st.info("Ensure config.json, processed_curve_data.csv, survival_curve_full_advanced.csv, "
+                "survival_function_table_advanced.csv, and group-proj-1-data.xlsx are present.")
         st.stop()
 
     # ===========================
-    # SIDEBAR - Model Configuration (Phase 1-4 defaults, read-only)
+    # SIDEBAR - Interactive Model Configuration
     # ===========================
     st.sidebar.header("Model Configuration")
 
-    st.sidebar.subheader("1. Core/Non-Core (Phase 1c)")
-    st.sidebar.markdown(f"**Method:** {config['method']}")
-    st.sidebar.markdown(f"**Core Ratio:** {config['core_ratio_pct']:.2f}%")
-    st.sidebar.markdown(f"**Core Amount:** ${config['core_amount']:,.2f}")
-    st.sidebar.markdown(f"**Non-Core Amount:** ${config['non_core_amount']:,.2f}")
+    # --- 1. Core Estimation Method ---
+    st.sidebar.subheader("1. Core/Non-Core Split")
 
-    core_pct = config['core_ratio_pct'] / 100
+    CORE_METHODS = {
+        "Detrended Regression": 83.57,
+        "Historical Minimum": 50.99,
+        "5th Percentile": 56.75,
+        "10th Percentile": 63.46,
+        "25th Percentile": 69.84,
+    }
+
+    selected_core_method = st.sidebar.selectbox(
+        "Core Estimation Method:",
+        list(CORE_METHODS.keys()),
+        index=0,
+        key="core_method_select"
+    )
+
+    # Auto-update slider when method changes
+    if 'last_core_method' not in st.session_state:
+        st.session_state.last_core_method = selected_core_method
+        st.session_state.core_ratio_slider = CORE_METHODS[selected_core_method]
+
+    if st.session_state.last_core_method != selected_core_method:
+        st.session_state.last_core_method = selected_core_method
+        st.session_state.core_ratio_slider = CORE_METHODS[selected_core_method]
+
+    core_pct_val = st.sidebar.slider(
+        "Core Ratio (%):", 0.0, 100.0,
+        step=0.1,
+        key="core_ratio_slider"
+    )
+    core_pct = core_pct_val / 100.0
     core_amount = CALC_DATE_BALANCE * core_pct
     non_core_amount = CALC_DATE_BALANCE * (1 - core_pct)
 
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("2. Survival Model (Phase 1b)")
-    st.sidebar.markdown("**Model:** Portfolio Kaplan-Meier")
-    st.sidebar.markdown(f"**S(1Y):** {float(survival_interp(365)):.2%}")
-    st.sidebar.markdown(f"**S(5Y):** {float(survival_interp(1825)):.2%}")
+    st.sidebar.caption(f"Core: ${core_amount:,.0f} | Non-Core: ${non_core_amount:,.0f}")
 
+    # --- 2. Survival Model ---
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("2. Survival Model")
+
+    SURVIVAL_MODELS = ["Portfolio KM", "Exponential", "Weibull", "Log-Normal", "Log-Logistic"]
+
+    selected_survival_model = st.sidebar.selectbox(
+        "Survival Model:",
+        SURVIVAL_MODELS,
+        index=0,
+        key="survival_model_select"
+    )
+
+    # Build survival interpolator based on selection
+    if selected_survival_model == "Portfolio KM":
+        survival_interp = build_survival_interpolator(surv_df)
+    else:
+        survival_interp = build_survival_interpolator_from_table(surv_table, selected_survival_model)
+
+    s_1y = float(survival_interp(365))
+    s_5y = float(survival_interp(1825))
+    st.sidebar.caption(f"S(1Y): {s_1y:.2%} | S(5Y): {s_5y:.2%}")
+
+    # --- Combined Model Name ---
+    st.sidebar.markdown("---")
+    combined_model_name = f"{selected_core_method} + {selected_survival_model}"
+    st.sidebar.info(f"**Model:** {combined_model_name}")
+
+    # --- 3. Non-Core Allocation ---
     st.sidebar.markdown("---")
     st.sidebar.subheader("3. Non-Core Allocation")
-    st.sidebar.markdown("**Method:** 100% O/N (immediate repricing)")
+    st.sidebar.markdown("100% O/N (immediate repricing)")
 
+    # --- 4. Rate Shock Scenario ---
     st.sidebar.markdown("---")
     st.sidebar.subheader("4. Rate Shock Scenario")
     scenario = st.sidebar.selectbox(
@@ -408,7 +503,7 @@ def main():
     # CALCULATIONS
     # ===========================
 
-    # Allocate cash flows using Portfolio KM survival
+    # Allocate cash flows using selected survival model
     core_alloc, non_core_alloc = allocate_cash_flows(
         CALC_DATE_BALANCE, core_pct, survival_interp, BUCKET_STRUCTURE
     )
@@ -475,7 +570,7 @@ def main():
             st.metric(
                 "Core Deposit",
                 f"${core_amount:,.0f}",
-                f"{core_pct:.1%} (Detrended Regression)"
+                f"{core_pct:.1%} ({selected_core_method})"
             )
 
         with col3:
@@ -516,7 +611,7 @@ def main():
     with tab2:
         st.subheader("Historical Balance & Forward Projection")
 
-        # Create projection based on Portfolio KM survival
+        # Create projection based on selected survival model
         projection_days = np.arange(0, 5 * 365 + 1)
         core_projection = core_amount * np.array([float(survival_interp(d)) for d in projection_days])
         non_core_projection = np.full(len(projection_days), non_core_amount)
@@ -564,7 +659,7 @@ def main():
         )
 
         fig_projection.update_layout(
-            title="Historical Balance (2016-2023) & Projected Balance (2024-2028) - Portfolio KM",
+            title=f"Historical Balance (2016-2023) & Projected Balance (2024-2028) - {selected_survival_model}",
             xaxis_title="Date", yaxis_title="Balance ($)",
             height=500, hovermode='x unified',
             legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
@@ -589,8 +684,8 @@ def main():
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("### Core Deposit Projection")
-            st.write(f"**Model:** Portfolio Kaplan-Meier (Phase 1b)")
-            st.write(f"**Method:** Detrended Regression (Phase 1c)")
+            st.write(f"**Survival Model:** {selected_survival_model}")
+            st.write(f"**Core Method:** {selected_core_method}")
             st.write(f"**Initial Core:** ${core_amount:,.0f}")
             st.write(f"**Projected Core (5Y):** ${core_projection[-1]:,.0f}")
             core_decay_pct = ((core_projection[-1] - core_amount) / core_amount) * 100
@@ -607,18 +702,27 @@ def main():
             st.dataframe(df_nmd, use_container_width=True)
 
     with tab3:
-        st.subheader("Survival Model: Portfolio Kaplan-Meier (Phase 1b)")
+        st.subheader(f"Survival Model: {selected_survival_model}")
 
         col1, col2 = st.columns([2, 1])
 
         with col1:
-            st.plotly_chart(plot_survival_curve(surv_df), use_container_width=True)
+            st.plotly_chart(
+                plot_survival_curve(surv_df, surv_table, selected_survival_model),
+                use_container_width=True
+            )
 
         with col2:
             st.markdown("### Model Details")
-            st.write("**Type:** Non-parametric (Portfolio KM)")
+            model_descriptions = {
+                "Portfolio KM": "Non-parametric, data-driven",
+                "Exponential": "Constant hazard rate",
+                "Weibull": "Decreasing hazard rate",
+                "Log-Normal": "Fat-tailed, higher long-term allocation",
+                "Log-Logistic": "Non-monotonic hazard rate",
+            }
+            st.write(f"**Type:** {model_descriptions.get(selected_survival_model, '')}")
             st.write("**Source:** Phase 1b analysis")
-            st.write("**Data:** Historical outflow observations")
 
             st.markdown("---")
             st.markdown("### Survival at Key Points")
@@ -636,8 +740,8 @@ def main():
             st.markdown("### Core Deposits")
             st.write(f"**Amount:** ${core_amount:,.2f}")
             st.write(f"**Percentage:** {core_pct:.1%}")
-            st.write(f"**Method:** Detrended Regression")
-            st.write(f"**Survival:** Portfolio KM")
+            st.write(f"**Method:** {selected_core_method}")
+            st.write(f"**Survival:** {selected_survival_model}")
 
         with col2:
             st.markdown("### Non-Core Deposits")
@@ -750,12 +854,13 @@ def main():
 
     # Footer
     st.markdown("---")
-    st.markdown("""
+    st.markdown(f"""
     <div style='text-align: center; color: gray;'>
         <p>QF609 Group Project #1 - Advanced IRRBB for Non-Maturity Deposits</p>
-        <p>SMU Bank | Calculation Date: 30-Dec-2023 | Model: Detrended Regression + Portfolio KM</p>
+        <p>SMU Bank | Calculation Date: 30-Dec-2023 | Model: {combined_model_name}</p>
     </div>
     """, unsafe_allow_html=True)
 
+# %%
 if __name__ == "__main__":
     main()
