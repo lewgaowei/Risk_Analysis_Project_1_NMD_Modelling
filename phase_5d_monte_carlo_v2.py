@@ -93,58 +93,52 @@ print(f"  Non-Core Amount:  {config['non_core_amount']:>12,.2f}")
 print(f"  Total Balance:    {calc_balance:>12,.2f}")
 
 # %% [markdown]
-# ## Section 3: Cash Flow Slotting (9 Basel Buckets)
+# ## Section 3: Cash Flow Slotting (11 IRRBB Buckets)
 #
-# Following reference methodology:
+# Uses Phase 1b Portfolio KM survival curve and Phase 2 bucket definitions:
 # - Non-core -> O/N bucket (immediate repricing)
-# - Core -> distributed across 1M-5Y using exponential decay profile
-# - Survival: S(t) = exp(-avg_monthly_outflow * t_months)
-# - Anything surviving beyond 5Y (60 months) is capped at 5Y bucket
+# - Core -> distributed across 1M-5Y using Portfolio KM S(t)
+# - Residual beyond 5Y (Basel cap) added to 5Y bucket
 
 # %%
-# Compute average monthly outflow rate from daily data
-# Monthly decay from monthly aggregated data (like reference)
-df_monthly = df.set_index('Date').resample('M').agg({
-    'Balance': 'mean',
-    'Outflow': 'sum'
-}).dropna()
-df_monthly['Monthly_Outflow_Rate'] = df_monthly['Outflow'] / df_monthly['Balance']
-avg_monthly_outflow = df_monthly['Monthly_Outflow_Rate'].mean()
+# Load Portfolio KM survival curve from Phase 1b
+surv_df = pd.read_csv('survival_curve_full_advanced.csv')
+survival_interp = interp1d(surv_df['Days'].values, surv_df['S(t)'].values,
+                           kind='linear', bounds_error=False,
+                           fill_value=(1.0, surv_df['S(t)'].values[-1]))
 
-# Stressed monthly decay (95th percentile)
-stressed_monthly_decay = df_monthly['Monthly_Outflow_Rate'].quantile(0.95)
-
-print(f"\nMonthly Decay Calibration:")
-print(f"  Avg monthly outflow rate:     {avg_monthly_outflow:.4%}")
-print(f"  Stressed (95th pctl):         {stressed_monthly_decay:.4%}")
-half_life_m = np.log(2) / avg_monthly_outflow if avg_monthly_outflow > 0 else 999
-print(f"  Implied half-life:            {half_life_m:.1f} months ({half_life_m/12:.1f} years)")
+print(f"\nSurvival Curve (Portfolio KM) loaded:")
+print(f"  Days range: 0 to {surv_df['Days'].max()}")
+print(f"  S(0)   = {float(survival_interp(0)):.4f}")
+print(f"  S(365) = {float(survival_interp(365)):.4f}")
+print(f"  S(1825)= {float(survival_interp(1825)):.4f}")
 
 # %%
-# 9 Basel time buckets (in months) with midpoints in years for discounting
+# 11 IRRBB time buckets (in days) matching Phase 2 definitions
 buckets = [
-    {'name': 'O/N',  'start_m': 0,  'end_m': 0,  'midpoint_yrs': 1/365},
-    {'name': '1M',   'start_m': 0,  'end_m': 1,  'midpoint_yrs': 1/24},
-    {'name': '3M',   'start_m': 1,  'end_m': 3,  'midpoint_yrs': 2/12},
-    {'name': '6M',   'start_m': 3,  'end_m': 6,  'midpoint_yrs': 4.5/12},
-    {'name': '1Y',   'start_m': 6,  'end_m': 12, 'midpoint_yrs': 9/12},
-    {'name': '2Y',   'start_m': 12, 'end_m': 24, 'midpoint_yrs': 1.5},
-    {'name': '3Y',   'start_m': 24, 'end_m': 36, 'midpoint_yrs': 2.5},
-    {'name': '4Y',   'start_m': 36, 'end_m': 48, 'midpoint_yrs': 3.5},
-    {'name': '5Y',   'start_m': 48, 'end_m': 60, 'midpoint_yrs': 4.5},
+    {'name': 'O/N',  'start_days': 0,    'end_days': 1,    'midpoint_yrs': 1/365},
+    {'name': '1M',   'start_days': 1,    'end_days': 30,   'midpoint_yrs': 0.0417},
+    {'name': '2M',   'start_days': 30,   'end_days': 60,   'midpoint_yrs': 0.125},
+    {'name': '3M',   'start_days': 60,   'end_days': 90,   'midpoint_yrs': 0.2083},
+    {'name': '6M',   'start_days': 90,   'end_days': 180,  'midpoint_yrs': 0.375},
+    {'name': '9M',   'start_days': 180,  'end_days': 270,  'midpoint_yrs': 0.625},
+    {'name': '1Y',   'start_days': 270,  'end_days': 365,  'midpoint_yrs': 0.875},
+    {'name': '2Y',   'start_days': 365,  'end_days': 730,  'midpoint_yrs': 1.5},
+    {'name': '3Y',   'start_days': 730,  'end_days': 1095, 'midpoint_yrs': 2.5},
+    {'name': '4Y',   'start_days': 1095, 'end_days': 1460, 'midpoint_yrs': 3.5},
+    {'name': '5Y',   'start_days': 1460, 'end_days': 1825, 'midpoint_yrs': 4.5},
 ]
 
 
-def slot_cashflows(balance, core_ratio, monthly_decay):
+def slot_cashflows(balance, core_ratio, surv_interp):
     """
-    Slot NMD balance into 9 Basel buckets.
+    Slot NMD balance into 11 IRRBB buckets using Portfolio KM survival curve.
 
     Non-core -> O/N.
-    Core -> distributed across 1M-5Y using S(t) = exp(-monthly_decay * t).
-    Balance surviving beyond 60M -> capped at 5Y.
+    Core -> distributed across 1M-5Y using S(t) from survival curve.
+    Residual beyond 5Y (1825 days) -> capped at 5Y bucket.
 
-    Returns dict with bucket names as keys and cash flow amounts as values,
-    plus a list of midpoint years.
+    Returns dict of allocations and dict of midpoint years.
     """
     core_amt = balance * core_ratio
     non_core_amt = balance * (1 - core_ratio)
@@ -159,19 +153,19 @@ def slot_cashflows(balance, core_ratio, monthly_decay):
             allocations['O/N'] = non_core_amt
             continue
 
-        s_start = np.exp(-monthly_decay * b['start_m'])
-        s_end = np.exp(-monthly_decay * b['end_m'])
+        s_start = float(surv_interp(b['start_days']))
+        s_end = float(surv_interp(b['end_days']))
         allocations[b['name']] = core_amt * (s_start - s_end)
 
-    # Regulatory cap: surviving beyond 5Y -> add to 5Y bucket
-    survival_5y = np.exp(-monthly_decay * 60)
-    allocations['5Y'] += core_amt * survival_5y
+    # Basel 5Y cap: residual surviving beyond 1825 days -> add to 5Y bucket
+    s_5y = float(surv_interp(1825))
+    allocations['5Y'] += core_amt * s_5y
 
     return allocations, midpoints
 
 
 # Slot the current balance
-alloc_base, midpts = slot_cashflows(calc_balance, core_pct, avg_monthly_outflow)
+alloc_base, midpts = slot_cashflows(calc_balance, core_pct, survival_interp)
 
 print(f"\nBasel Cash Flow Slotting")
 print(f"{'='*60}")
@@ -189,39 +183,35 @@ print(f"  {'TOTAL':<8} {'':<12} {total_cf:>14,.2f} {total_cf/calc_balance*100:>1
 # %% [markdown]
 # ## Section 4: Interest Rate Curve, Shock Scenarios & EVE/NII Functions
 #
-# Following reference: SGD swap curve as of 31-Dec-2023 with 4 shock scenarios.
+# Uses actual yield curve from processed_curve_data.csv (Phase 1a).
+# 4 shock scenarios matching Phase 3/4 definitions:
 # - EVE = sum(CF * DF) where DF = 1/(1+r)^t
-# - NII = sum(CF * r) for full year interest at bucket rate
+# - NII = sum(CF_i * r_i * (1 - t_i)) for buckets with t_i <= 1Y (Phase 4)
 
 # %%
-# === Base Interest Rate Curve (Reference: SGD rates end-2023) ===
-rate_tenors = {
-    'O/N': 1/365, '1M': 1/12, '3M': 3/12, '6M': 6/12,
-    '1Y': 1.0, '2Y': 2.0, '3Y': 3.0, '4Y': 4.0, '5Y': 5.0,
-}
+# === Base Interest Rate Curve (from Phase 1a processed_curve_data.csv) ===
+curve_df = pd.read_csv('processed_curve_data.csv')
+tenor_years = curve_df['Tenor_Years'].values
+tenor_labels = curve_df['Tenor'].values.tolist()
+base_curve = curve_df['ZeroRate'].values
 
-base_rates = {
-    'O/N': 0.0375, '1M': 0.0380, '3M': 0.0385, '6M': 0.0370,
-    '1Y': 0.0350, '2Y': 0.0330, '3Y': 0.0320, '4Y': 0.0315, '5Y': 0.0310,
-}
-
-tenor_years = np.array(list(rate_tenors.values()))
-tenor_labels = list(rate_tenors.keys())
-base_curve = np.array(list(base_rates.values()))
-
-# === 4 Shock Scenarios ===
+# === 4 Shock Scenarios (matching Phase 3/4) ===
 # S1: +200bps parallel
 shock_up = base_curve + 0.0200
 
 # S2: -200bps parallel (floored at 0)
 shock_down = np.maximum(base_curve - 0.0200, 0.0)
 
-# S3: Short rate up (+200bps tapering to 0 at 5Y)
+# S3: Steepener — short rate up (+200bps tapering to 0 at 5Y)
 taper_weights = np.maximum(1 - tenor_years / 5.0, 0)
 shock_short_up = base_curve + 0.0200 * taper_weights
 
-# S4: Flattener (short +200bps to long -100bps)
-flatten_shocks = 0.0200 - (0.0200 + 0.0100) * tenor_years / 5.0
+# S4: Flattener — piecewise: +200bps at t=0, 0 at 2Y pivot, -100bps at 5Y
+flatten_shocks = np.where(
+    tenor_years <= 2,
+    0.0200 * (1 - tenor_years / 2),
+    -0.0100 * (tenor_years - 2) / (5 - 2)
+)
 shock_flattener = np.maximum(base_curve + flatten_shocks, 0.0)
 
 scenarios = {
@@ -264,7 +254,9 @@ def compute_eve(allocations, midpoints_dict, rate_curve_arr, tenor_yrs_arr):
 
 def compute_nii(allocations, midpoints_dict, rate_curve_arr, tenor_yrs_arr):
     """
-    NII = sum(CF_i * r_i) - simplified full year interest at bucket rate.
+    NII = sum(CF_i * r_i * (1 - t_i)) for buckets with t_i <= 1Y.
+    Matches Phase 4 IRRBB methodology: only buckets repricing within 1Y,
+    time-weighted by remaining fraction of the year.
     """
     interp_func = interp1d(tenor_yrs_arr, rate_curve_arr, kind='linear',
                            bounds_error=False, fill_value='extrapolate')
@@ -272,8 +264,10 @@ def compute_nii(allocations, midpoints_dict, rate_curve_arr, tenor_yrs_arr):
     for bname in allocations:
         cf = allocations[bname]
         t = midpoints_dict[bname]
-        r = max(interp_func(t), 0)
-        nii += cf * r * 1.0
+        if t > 1.0:  # Only buckets repricing within 1Y contribute to NII
+            continue
+        r = max(float(interp_func(t)), 0)
+        nii += cf * r * (1 - t)  # time-weighted
     return nii
 
 
@@ -330,7 +324,6 @@ print(f"\n  WORST CASE: {worst_nii} (dNII = {shock_nii[worst_nii]:,.2f})")
 # - Each day: net_rate = mu_net + noise, Balance(t+1) = Balance(t) + Balance(t) * net_rate
 # - Uses NET flow (Inflow - Outflow) so balance stays realistic
 # - Noise ~ N(0, sigma_net^2)
-# - Note: GROSS outflow rate (lambda_daily) is still used for SLOTTING survival curve
 #
 # **2. Interest rate paths (Vasicek model):**
 # - dr = kappa * (theta - r) * dt + sigma_r * sqrt(dt) * dW
@@ -338,9 +331,9 @@ print(f"\n  WORST CASE: {worst_nii} (dNII = {shock_nii[worst_nii]:,.2f})")
 #
 # At Year 1, for each path we:
 # - Take the simulated balance
-# - Compute core/non-core using reference method (with stochastic perturbation)
-# - Slot into 9 buckets (using gross outflow decay for survival curve)
-# - Shift the base yield curve by the Vasicek rate change
+# - Perturb core ratio (stochastic uncertainty around Phase 1c estimate)
+# - Slot into 11 buckets using Portfolio KM survival curve (Phase 1b/2)
+# - Shift the actual yield curve by the Vasicek rate change
 # - Compute EVE/NII under base curve AND shocked curve (pure rate effect)
 
 # %%
@@ -370,8 +363,8 @@ print(f"  Seed:                 {seed}")
 print(f"\n  Balance Path (NET flow model):")
 print(f"    Mu net daily:       {mu_net:.6f}")
 print(f"    Sigma net daily:    {sigma_net:.6f}")
-print(f"  Slotting Decay (GROSS outflow):")
-print(f"    Monthly outflow:    {avg_monthly_outflow:.4%}")
+print(f"  Slotting: Portfolio KM survival curve (Phase 1b)")
+print(f"    S(1Y) = {float(survival_interp(365)):.4f},  S(5Y) = {float(survival_interp(1825)):.4f}")
 print(f"  Interest Rate Path (Vasicek):")
 print(f"    r0:                 {r0:.4%}")
 print(f"    Kappa:              {kappa_v}")
@@ -502,9 +495,9 @@ print("Saved: mc_section5_paths.png")
 #
 # For each of the 1,000 paths at Year 1:
 # 1. Take simulated balance and short rate
-# 2. Perturb core ratio (stochastic uncertainty around base estimate)
-# 3. Slot into 9 buckets using gross outflow decay
-# 4. Shift base yield curve by simulated rate change (parallel shift)
+# 2. Perturb core ratio (stochastic uncertainty around Phase 1c estimate)
+# 3. Slot into 11 buckets using Portfolio KM survival curve
+# 4. Shift actual yield curve by simulated rate change (parallel shift)
 # 5. Compute EVE and NII under the path's curve AND under 4 shock scenarios
 # 6. dEVE = EVE(path) - EVE(static base), dNII = NII(path) - NII(static base)
 #
@@ -530,8 +523,8 @@ for i in range(n_paths):
     # 3. Perturb core ratio (clip to [0.5, 0.99] to keep realistic)
     core_ratio_i = np.clip(core_pct + np.random.normal(0, sigma_core), 0.50, 0.99)
 
-    # 4. Slot into 9 buckets using this path's balance + core ratio
-    alloc_i, midpts_i = slot_cashflows(bal_y1, core_ratio_i, avg_monthly_outflow)
+    # 4. Slot into 11 buckets using this path's balance + core ratio
+    alloc_i, midpts_i = slot_cashflows(bal_y1, core_ratio_i, survival_interp)
 
     # 5. Build this path's yield curve: base curve + parallel shift from Vasicek
     curve_i = np.maximum(base_curve + rate_shift, 0)
@@ -866,17 +859,17 @@ print(f"  Saved: mc_v2_risk_summary.csv ({len(summary_df)} rows)")
 params = {
     'Parameter': [
         'Calculation Date', 'Balance', 'Core Ratio', 'Non-Core Ratio',
-        'Lambda Daily (gross outflow)', 'Sigma Decay',
+        'Core Method', 'Survival Model',
         'Mu Net Daily', 'Sigma Net Daily',
-        'Avg Monthly Outflow', 'N Paths', 'Horizon (days)',
+        'N Paths', 'Horizon (days)',
         'Vasicek r0', 'Vasicek kappa', 'Vasicek theta', 'Vasicek sigma_r',
         'Core Ratio Sigma', 'Random Seed',
     ],
     'Value': [
         str(calc_date.date()), calc_balance, core_pct, non_core_pct,
-        lambda_daily, sigma_decay,
+        config['method'], 'Portfolio KM (Phase 1b)',
         mu_net, sigma_net,
-        avg_monthly_outflow, n_paths, n_days_sim,
+        n_paths, n_days_sim,
         r0, kappa_v, theta_v, sigma_r,
         sigma_core, seed,
     ]
